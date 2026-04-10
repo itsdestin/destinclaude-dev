@@ -1,0 +1,20 @@
+# Cloned repos (managed by setup.sh)
+destincode/
+destinclaude/
+destinclaude-admin/
+destinclaude-themes/
+destincode-marketplace/
+
+# Worktrees and temp directories
+*-worktree*/
+*-unified/
+*-phase*/
+*-decoupling/
+*-sessions/
+
+# Auto-title artifacts
+.auto-title
+.auto-title-audit.tmp
+
+# Claude project settings (user-specific)
+.claude/
