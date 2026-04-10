@@ -4,6 +4,8 @@
 
 **On first session**, run `bash setup.sh` from the project root to clone all repos. On subsequent sessions, run it again to pull the latest from each repo's default branch. Do this before any other work.
 
+**All pushes and PRs go to the relevant sub-repo** (e.g., `destincode/`, `destinclaude/`), never to the `destinclaude-dev` repo itself. This repo is only the workspace scaffold.
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## About This Project
