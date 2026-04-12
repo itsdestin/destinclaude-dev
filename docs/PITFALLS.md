@@ -41,6 +41,13 @@ Every item here is a lesson learned the hard way or a constraint that's invisibl
 - **Release skill (`destinclaude-admin`) only handles toolkit releases currently.** destincode multi-repo coordination needs rework — see memory entry `project_release_rework`.
 - **v2.3.0 lessons**: auto-tag was fragile, hooks were untested, spec gaps existed, protocol parity blind spots broke cross-platform features. See memory `project_release_lessons_2_3_0`.
 
+## Plugin Installation & Claude Code Registries
+
+- **Claude Code v2.1+ does NOT filesystem-scan `~/.claude/plugins/`.** Its plugin loader (`GD_` in the binary) iterates `enabledPlugins` from `settings.json` only. Dropping files into `~/.claude/plugins/<id>/` without writing the four registries leaves the plugin invisible to the CLI — `/reload-plugins` will report "0 new plugins."
+- **Four registries must be written for a plugin to load.** `ClaudeCodeRegistry` (`src/main/claude-code-registry.ts`) handles all four atomically: (1) `~/.claude/settings.json` → `enabledPlugins["id@destincode"]: true`, (2) `~/.claude/installed_plugins.json` → v2 entry with absolute `installPath`, (3) `~/.claude/known_marketplaces.json` → marketplace source config, (4) `~/.claude/marketplaces/destincode/.claude-plugin/marketplace.json` → plugin manifest list. Always call `registerPluginInstall()` / `unregisterPluginInstall()` — don't write these files by hand.
+- **Plugin install location is `~/.claude/marketplaces/destincode/plugins/<id>/`, not `~/.claude/plugins/<id>/`.** The non-cache loader (`t71`) computes the path as `<marketplaceInstallLocation>/<source>` and errors if that directory doesn't exist. Plugins must live under the marketplace root for both cache and non-cache load paths to work.
+- **`installed_plugins.json` lives at `~/.claude/installed_plugins.json`.** NOT `~/.claude/plugins/installed_plugins.json`. This was a historical bug in `hasConflict()` and `skill-scanner.ts` — both always silently returned no results. Now fixed.
+
 ## Overlays (Popups, Modals, Drawers)
 
 - **Use `<Scrim>` and `<OverlayPanel>` from `components/overlays/Overlay.tsx`** — don't hardcode `bg-black/40`, `bg-canvas/60`, `backdrop-blur-sm`, `shadow-xl`, `rounded-xl`, or arbitrary z-indexes. The primitives pull scrim color, blur, surface background, shadow, and z-index from theme tokens automatically. Anchored popovers (dropdowns, context menus) that don't need a scrim can use `.layer-surface` class directly.
