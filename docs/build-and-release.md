@@ -1,6 +1,6 @@
 # Build Order & Release Flows
 
-Destin does not build locally. All builds happen through GitHub Actions CI in the relevant sub-repo.
+Release builds happen through GitHub Actions CI in the relevant sub-repo. Day-to-day iteration on desktop changes runs locally — see `docs/local-dev.md` and the **Local dev loop** section below.
 
 ## Build order dependencies
 
@@ -32,7 +32,26 @@ A single `vX.Y.Z` tag in destincode triggers both `android-release.yml` and `des
 2. `auto-tag.yml` compares `HEAD` vs `HEAD~1` plugin.json versions
 3. If changed, creates `vX.Y.Z` tag automatically
 
-## Local verification (when needed)
+## Local dev loop (desktop)
+
+The supported way to iterate on desktop changes while the installed/built app stays open for real work:
+
+```bash
+bash scripts/run-dev.sh
+```
+
+- Launches a second Electron window labelled **DestinCode Dev**
+- Shifts ports via `DESTINCODE_PORT_OFFSET=50` (Vite 5173 → 5223, remote 9900 → 9950)
+- Splits Electron `userData` via `DESTINCODE_PROFILE=dev` so dev's localStorage / cookies / window bounds don't clobber the built app's
+- Shares `~/.claude/` with the built app intentionally (plugins, settings, memory) so dev tests against real state — `write-guard.sh` and `.sync-lock` prevent corruption; expect occasional `WRITE BLOCKED` messages as normal friction
+
+First time only: `cd destincode/desktop && npm ci` to install deps. After that `scripts/run-dev.sh` is a one-shot command.
+
+See `docs/local-dev.md` for caveats (plugin install shares state with built app, OneDrive path warning, remote-access UI is read-only in dev).
+
+## Local verification (typecheck + CI-style build)
+
+When you need to confirm something compiles or passes tests — not just runs:
 
 ```bash
 # Desktop

@@ -51,11 +51,26 @@ cd <repo> && git fetch origin && git pull origin master
 
 **"Merge" means merge AND push.** Don't stop at a local merge.
 
+**Clean up worktrees after merging to master.** Once a feature branch is merged and pushed, remove its worktree and delete the branch:
+```bash
+git worktree remove <path>
+git branch -D <branch>   # -D (not -d) because --no-ff merges leave the tip non-ancestral
+```
+Verify the commit landed on master first: `git branch --contains <sha>` should list `master`. Leaving stale worktrees around accumulates cruft and confuses future sessions about what's in-flight.
+
 **Verify fix consequences before shipping.** Batch fixes — especially network/permission changes — can silently break cross-cutting features. Check both platforms (desktop + Android) after any IPC change.
 
 ## Development Workflow
 
-Destin does not build locally. All builds happen through GitHub Actions CI in the relevant sub-repo. For Claude sessions that need to verify code compiles or run tests locally:
+Release builds happen through GitHub Actions CI in the relevant sub-repo. For iterating on desktop changes locally alongside Destin's installed/built app:
+
+```bash
+bash scripts/run-dev.sh
+```
+
+This shifts every port destincode uses (Vite 5173 → 5223, remote server 9900 → 9950) and splits Electron `userData` into a separate dir so the dev instance coexists with a running built app. See `docs/local-dev.md` for what's isolated, what's shared (`~/.claude/`), and the caveats.
+
+For Claude sessions that need to verify code compiles or run tests locally:
 
 ```bash
 # Desktop
