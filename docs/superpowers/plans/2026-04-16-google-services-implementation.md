@@ -19,203 +19,15 @@
 
 ---
 
-## Phase 0 — Research (unblocks implementation)
+## Phase 0 — Research (RESOLVED 2026-04-16)
 
-Resolve all three open research items from the spec before writing any plugin code. If any comes back unfavorable, stop and return to brainstorming — do not proceed blind.
+All three research items were resolved via documentation review in a prior session. Findings + spec updates are committed (`629ac15`). Summary:
 
-### Task 0.1: Resolve 7-day refresh-token expiry question
+- **Item 1 (7-day refresh-token expiry) — 🔴 RED.** Policy still enforced. Mitigated by wrapper-driven auto-reauth; no `--reauth` command for users. [findings](research/2026-04-16-refresh-token-findings.md)
+- **Item 2 (`gcloud` External-consent automation) — 🟡 YELLOW.** IAP OAuth Admin API shut down 2026-03-19; ~3–5 min of guided Cloud Console clicks per user unavoidable. [findings](research/2026-04-16-oauth-brand-automation.md)
+- **Item 3 (`gws` Slides write coverage) — 🟢 GREEN.** Full read + write via `batchUpdate`; export/list hop to Drive. [findings](research/2026-04-16-gws-slides-coverage.md)
 
-**Spec reference:** Open Research Item 1.
-
-**Files:**
-- Create (temporary, delete after): throwaway test GCP project (in Destin's Google account)
-- Create: `docs/superpowers/plans/research/2026-04-16-refresh-token-findings.md`
-
-- [ ] **Step 1: Read current Google OAuth policy docs**
-
-Visit https://developers.google.com/identity/protocols/oauth2 and https://support.google.com/cloud/answer/10311615. Document what they say (as of research date) about refresh-token lifetime for External-type apps in "Testing" publishing status with sensitive scopes like `gmail.modify`, `drive`, `calendar`.
-
-Write findings to `docs/superpowers/plans/research/2026-04-16-refresh-token-findings.md` under heading "Policy read."
-
-- [ ] **Step 2: Provision a real test project with Gmail sensitive scope**
-
-Run:
-```bash
-gcloud projects create youcoded-refresh-test-$(date +%s) --name="Refresh Test"
-gcloud config set project youcoded-refresh-test-<id>
-gcloud services enable gmail.googleapis.com
-# Create OAuth brand + client (use gcloud alpha iap oauth-brands / oauth-clients)
-# Complete OAuth flow requesting scope https://www.googleapis.com/auth/gmail.modify
-# Record token issued_at timestamp and refresh_token value
-```
-
-Document the commands used and token details in the findings file under "Test project provisioning."
-
-- [ ] **Step 3: Wait 8-10 days, attempt token refresh**
-
-Do not touch the project. After 8-10 days, attempt to use the refresh token. Record outcome:
-- SUCCESS → the 7-day policy does not apply or has been lifted
-- FAIL with `invalid_grant` → policy still applies
-
-Document in findings file under "Refresh attempt result."
-
-- [ ] **Step 4: Write conclusion + recommendation**
-
-In the findings doc, write a "Conclusion" section with one of:
-- **GREEN:** 7-day expiry no longer applies. Proceed with user-brings-own OAuth as speced.
-- **YELLOW:** Expiry applies BUT `gws` has a workaround (document the workaround).
-- **RED:** Expiry applies with no workaround. Recommend which fallback from the spec to pursue: (a) narrow scopes, (b) verified app, (c) weekly re-auth.
-
-- [ ] **Step 5: Commit findings**
-
-```bash
-cd C:/Users/desti/youcoded-dev
-git add docs/superpowers/plans/research/2026-04-16-refresh-token-findings.md
-git commit -m "research: resolve 7-day refresh-token question for google-services spec
-
-Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
-```
-
-- [ ] **Step 6: Tear down the throwaway project**
-
-```bash
-gcloud projects delete youcoded-refresh-test-<id>
-```
-
-### Task 0.2: Resolve gcloud External-consent automation question
-
-**Spec reference:** Open Research Item 2.
-
-**Files:**
-- Create (temporary, delete after): throwaway test GCP project
-- Create: `docs/superpowers/plans/research/2026-04-16-oauth-brand-automation.md`
-
-- [ ] **Step 1: Attempt end-to-end brand + client creation via gcloud alone**
-
-Run (replace IDs/emails as needed):
-```bash
-PROJECT_ID=youcoded-brand-test-$(date +%s)
-gcloud projects create $PROJECT_ID
-gcloud config set project $PROJECT_ID
-gcloud services enable iap.googleapis.com gmail.googleapis.com
-
-# Attempt External-type brand creation
-gcloud alpha iap oauth-brands create \
-  --application_title="YouCoded Test" \
-  --support_email="destinmoss.work@gmail.com"
-
-# Inspect what gets created
-gcloud alpha iap oauth-brands list
-
-# Attempt OAuth client creation
-gcloud alpha iap oauth-clients create $BRAND_NAME --display_name="YouCoded Test"
-gcloud alpha iap oauth-clients list $BRAND_NAME
-```
-
-Document every output + error in the findings file under "Command log."
-
-- [ ] **Step 2: Manually inspect the consent screen in the cloud console**
-
-Visit https://console.cloud.google.com/apis/credentials/consent?project=$PROJECT_ID.
-
-Record: (a) was the brand created? (b) is it "External" or "Internal"? (c) what fields are filled / unfilled? (d) what's the publishing status?
-
-Document in the findings file under "Console inspection."
-
-- [ ] **Step 3: Write conclusion + recommendation**
-
-Under "Conclusion":
-- **GREEN:** gcloud alone configures External consent fully. `bootstrap-gcp.sh` is a pure script.
-- **YELLOW:** gcloud gets partway; N specific fields require console clicks. Document which.
-- **RED:** gcloud's External brand support is broken; users must do all of it in the console.
-
-Recommend which UX for the setup command: (a) pure script, (b) hybrid script + screenshot walkthrough for the manual bits, (c) script opens console to the right page and guides user.
-
-- [ ] **Step 4: Commit findings and tear down**
-
-```bash
-cd C:/Users/desti/youcoded-dev
-git add docs/superpowers/plans/research/2026-04-16-oauth-brand-automation.md
-git commit -m "research: resolve gcloud External-consent automation question
-
-Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
-
-gcloud projects delete $PROJECT_ID
-```
-
-### Task 0.3: Resolve `gws` Slides write coverage question
-
-**Spec reference:** Open Research Item 3.
-
-**Files:**
-- Create: `docs/superpowers/plans/research/2026-04-16-gws-slides-coverage.md`
-
-- [ ] **Step 1: Install gws and enumerate the slides surface**
-
-On macOS:
-```bash
-brew install googleworkspace/tap/gws
-# or the equivalent install path
-gws --version
-gws slides --help
-```
-
-Document full output of `gws slides --help` in findings under "Command surface."
-
-- [ ] **Step 2: Consult upstream release notes**
-
-Visit https://github.com/googleworkspace/cli/releases. Search for "slides" in each release back to v0.15.
-
-Document findings under "Release-note history."
-
-- [ ] **Step 3: Write conclusion**
-
-Under "Conclusion":
-- **GREEN:** Full write support (create, add slide, update text). Spec's Slides section stays as-is.
-- **YELLOW:** Partial writes (e.g., create-deck but not add-slide). Document what's in.
-- **RED:** Read-only. Ship Slides read-only in v1, file follow-up.
-
-- [ ] **Step 4: Commit findings**
-
-```bash
-cd C:/Users/desti/youcoded-dev
-git add docs/superpowers/plans/research/2026-04-16-gws-slides-coverage.md
-git commit -m "research: resolve gws Slides write coverage question
-
-Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
-```
-
-### Task 0.4: Phase 0 checkpoint — go / no-go
-
-**Files:**
-- Modify: `docs/superpowers/specs/2026-04-16-google-services-design.md` (add "Research resolved" section with dated results and any branch taken)
-
-- [ ] **Step 1: Review all three findings docs**
-
-Read each findings file. Summarize the three outcomes in one paragraph.
-
-- [ ] **Step 2: Apply any spec updates**
-
-If any research item returned RED or YELLOW, update the spec's relevant section to reflect the resolved branch. For example:
-- If Item 1 is RED → update "OAuth strategy" section to reflect chosen fallback
-- If Item 2 is YELLOW → update Step 3 of user-facing flow to document the manual cloud-console insert
-- If Item 3 is RED → update "Google Slides" per-integration section to "read-only in v1"
-
-- [ ] **Step 3: Decide go / no-go for Phase 1**
-
-If all three are GREEN or recoverable YELLOW → proceed to Phase 1.
-
-If Item 1 is RED and the chosen fallback is "verified app" → **STOP.** This plan is no longer valid; return to brainstorming to re-design OAuth strategy. Do not proceed.
-
-- [ ] **Step 4: Commit spec update**
-
-```bash
-cd C:/Users/desti/youcoded-dev
-git add docs/superpowers/specs/2026-04-16-google-services-design.md
-git commit -m "docs(google-services): record Phase 0 research outcomes in spec
-
-Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
-```
+Spec section ["Research outcomes"](../specs/2026-04-16-google-services-design.md#research-outcomes-resolved-2026-04-16) has the authoritative writeup. **This phase is done; no further tasks here. Proceed to Phase 1.**
 
 ---
 
@@ -593,28 +405,29 @@ git commit -m "feat(google-services): add install-gws.sh setup helper (pinned $G
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ```
 
-### Task 2.3: Write bootstrap-gcp.sh
+### Task 2.3: Write bootstrap-gcp.sh (scripted scaffold only)
 
-**Spec reference:** User-facing flow Step 3; Research Item 2 outcome.
+**Spec reference:** User-facing flow Step 3A.
+
+Per Research Item 2, OAuth consent brand + client-ID creation for External apps can NOT be automated via `gcloud` in 2026. Those steps move to `consent-walkthrough.sh` (Task 2.3.5). This script now owns only the scripted portion: project create + API enable.
 
 **Files:**
 - Create: `wecoded-marketplace/google-services/setup/bootstrap-gcp.sh`
 
-- [ ] **Step 1: Re-read Task 0.2 findings**
-
-Open `docs/superpowers/plans/research/2026-04-16-oauth-brand-automation.md`. Note which steps need cloud-console clicks (if any) — the bootstrap script must pause and guide the user through those at the right points.
-
-- [ ] **Step 2: Write the script (GREEN research path shown; adapt if research returned YELLOW)**
+- [ ] **Step 1: Write the script**
 
 ```bash
 #!/usr/bin/env bash
 # bootstrap-gcp.sh
-# Drives gcloud to create the user's personal YouCoded GCP project, enable the
-# six Google APIs, configure OAuth consent (External type, Testing publish
-# status), and emit the OAuth client_id + client_secret for gws to consume.
+# Drives gcloud to create the user's personal YouCoded GCP project and enable
+# the six Google APIs. Idempotent: on re-run, detects existing project and
+# resumes (covers "project exists but N of 6 APIs enabled").
 #
-# Idempotent: on re-run, detects the existing youcoded-* project and resumes.
-# Emits progress as plain-language lines prefixed with "  ✓" for the slash
+# Writes the created/found project_id to $YOUCODED_OUTPUT_DIR/project.env for
+# later scripts to consume. Does NOT handle OAuth consent/client creation —
+# that moved to consent-walkthrough.sh (per IAP OAuth Admin API shutdown).
+#
+# Emits plain-language progress as lines prefixed with "  ✓" for the slash
 # command to echo directly.
 
 set -euo pipefail
@@ -622,17 +435,15 @@ set -euo pipefail
 APIS=(gmail.googleapis.com drive.googleapis.com docs.googleapis.com
       sheets.googleapis.com slides.googleapis.com calendar-json.googleapis.com)
 
-# Inputs from environment (set by /google-services-setup)
-: "${YOUCODED_OUTPUT_DIR:?must be set}"  # where to write client_id + client_secret
+: "${YOUCODED_OUTPUT_DIR:?must be set}"
 
-# ------- Idempotency: detect existing project -------
+# ------- Idempotency: detect existing YouCoded project -------
 EXISTING_PROJECT=$(gcloud projects list --filter="name:YouCoded Personal" --format="value(projectId)" 2>/dev/null | head -n1)
 
 if [ -n "$EXISTING_PROJECT" ]; then
   PROJECT_ID="$EXISTING_PROJECT"
   echo "  ✓ Found existing YouCoded connection ($PROJECT_ID)"
 else
-  # Random 6-char suffix to avoid ID collisions across users
   SUFFIX=$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom | head -c 6)
   PROJECT_ID="youcoded-personal-$SUFFIX"
   gcloud projects create "$PROJECT_ID" --name="YouCoded Personal" --quiet >/dev/null
@@ -641,15 +452,15 @@ fi
 
 gcloud config set project "$PROJECT_ID" --quiet >/dev/null
 
-# ------- Enable the six APIs (idempotent) -------
+# ------- Enable the six APIs (idempotent per-API) -------
 for api in "${APIS[@]}"; do
   case "$api" in
-    gmail.googleapis.com)       label="Gmail" ;;
-    drive.googleapis.com)       label="Drive" ;;
-    docs.googleapis.com)        label="Docs" ;;
-    sheets.googleapis.com)      label="Sheets" ;;
-    slides.googleapis.com)      label="Slides" ;;
-    calendar-json.googleapis.com) label="Calendar" ;;
+    gmail.googleapis.com)          label="Gmail" ;;
+    drive.googleapis.com)          label="Drive" ;;
+    docs.googleapis.com)           label="Docs" ;;
+    sheets.googleapis.com)         label="Sheets" ;;
+    slides.googleapis.com)         label="Slides" ;;
+    calendar-json.googleapis.com)  label="Calendar" ;;
   esac
   if gcloud services list --enabled --filter="name:$api" --format="value(name)" | grep -q "$api"; then
     echo "  ✓ $label already unlocked"
@@ -659,45 +470,12 @@ for api in "${APIS[@]}"; do
   fi
 done
 
-# ------- OAuth consent brand (External) -------
-# NOTE: If Task 0.2 research returned YELLOW, insert the screenshot-guided
-# manual-click walkthrough here and skip the gcloud brand commands.
-
-BRAND_NAME=$(gcloud alpha iap oauth-brands list --format="value(name)" 2>/dev/null | head -n1)
-if [ -z "$BRAND_NAME" ]; then
-  gcloud alpha iap oauth-brands create \
-    --application_title="YouCoded Personal" \
-    --support_email="$(gcloud config get-value account)" \
-    --quiet >/dev/null
-  BRAND_NAME=$(gcloud alpha iap oauth-brands list --format="value(name)" | head -n1)
-fi
-
-# ------- OAuth client -------
-CLIENT_INFO=$(gcloud alpha iap oauth-clients list "$BRAND_NAME" --format="value(name,secret)" 2>/dev/null | head -n1)
-if [ -z "$CLIENT_INFO" ]; then
-  CLIENT_INFO=$(gcloud alpha iap oauth-clients create "$BRAND_NAME" \
-    --display_name="YouCoded Personal" \
-    --format="value(name,secret)" 2>/dev/null)
-fi
-
-CLIENT_ID=$(echo "$CLIENT_INFO" | awk '{print $1}' | awk -F/ '{print $NF}')
-CLIENT_SECRET=$(echo "$CLIENT_INFO" | awk '{print $2}')
-
-# ------- Emit credentials to the output dir for gws auth setup -------
+# ------- Emit project_id for downstream scripts -------
 mkdir -p "$YOUCODED_OUTPUT_DIR"
-cat > "$YOUCODED_OUTPUT_DIR/oauth-credentials.json" <<EOF
-{
-  "client_id": "$CLIENT_ID",
-  "client_secret": "$CLIENT_SECRET",
-  "project_id": "$PROJECT_ID"
-}
-EOF
-
-echo "  ✓ Configured OAuth consent screen"
-echo "  ✓ Generated OAuth credentials"
+printf 'PROJECT_ID=%s\n' "$PROJECT_ID" > "$YOUCODED_OUTPUT_DIR/project.env"
 ```
 
-- [ ] **Step 3: Make executable, lint**
+- [ ] **Step 2: Make executable, lint**
 
 ```bash
 cd C:/Users/desti/youcoded-dev/.worktrees/google-services-marketplace
@@ -708,23 +486,157 @@ shellcheck google-services/setup/bootstrap-gcp.sh
 
 Expected: shellcheck passes.
 
-- [ ] **Step 4: Run end-to-end against a throwaway project**
+- [ ] **Step 3: Run end-to-end against a throwaway project**
 
 ```bash
 export YOUCODED_OUTPUT_DIR=/tmp/google-services-test-$$
 bash google-services/setup/bootstrap-gcp.sh
-cat "$YOUCODED_OUTPUT_DIR/oauth-credentials.json"
+cat "$YOUCODED_OUTPUT_DIR/project.env"
 ```
 
-Expected: output file exists with `client_id`, `client_secret`, `project_id`. Each `✓` line appears. Re-run — should detect the existing project and skip recreation (test idempotency).
+Expected: `project.env` file exists with PROJECT_ID line. Each `✓` line appears. Re-run — detects existing project, APIs, skips recreation (test idempotency).
 
 Tear down after: `gcloud projects delete <project-id>`.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git add google-services/setup/bootstrap-gcp.sh
-git commit -m "feat(google-services): add bootstrap-gcp.sh (idempotent GCP provisioning)
+git commit -m "feat(google-services): add bootstrap-gcp.sh (project + API enable)
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
+```
+
+### Task 2.3.5: Write consent-walkthrough.sh (guided console steps)
+
+**Spec reference:** User-facing flow Step 3B + 3C.
+
+Owns the manual portion of setup that cannot be automated (per Research Item 2 YELLOW). Opens Cloud Console deep-links, prints click-by-click instructions, captures pasted OAuth client ID + secret, writes `oauth-credentials.json`.
+
+**Files:**
+- Create: `wecoded-marketplace/google-services/setup/consent-walkthrough.sh`
+
+- [ ] **Step 1: Write the script**
+
+```bash
+#!/usr/bin/env bash
+# consent-walkthrough.sh
+# Guides the user through the ~3 minutes of Cloud Console clicks that Google
+# does not permit to be automated for External OAuth apps. Idempotent: if
+# oauth-credentials.json already exists, skips and reports "already configured."
+
+set -euo pipefail
+
+: "${YOUCODED_OUTPUT_DIR:?must be set}"
+
+source "$YOUCODED_OUTPUT_DIR/project.env"  # provides PROJECT_ID
+: "${PROJECT_ID:?project.env missing PROJECT_ID}"
+
+CREDS_FILE="$YOUCODED_OUTPUT_DIR/oauth-credentials.json"
+
+if [ -f "$CREDS_FILE" ]; then
+  echo "  ✓ Permissions screen already configured"
+  exit 0
+fi
+
+# ------- Open cross-platform -------
+open_url() {
+  local url="$1"
+  case "$(uname -s)" in
+    Darwin)                     open "$url" ;;
+    Linux)                      xdg-open "$url" 2>/dev/null || echo "Open this URL in your browser: $url" ;;
+    MINGW*|MSYS*|CYGWIN*)       start "" "$url" ;;
+    *)                          echo "Open this URL in your browser: $url" ;;
+  esac
+}
+
+# ------- Step 3B: Consent screen configuration -------
+cat <<EOF
+
+One quick thing I can't do for you automatically.
+
+Google needs you to set up the permissions screen yourself. I've
+opened the page in your browser — follow along:
+
+  1. Click "Get Started"
+  2. Choose audience: "External"   (important — not "Internal")
+  3. App name: "YouCoded Personal"
+  4. Support email: your own email
+  5. Click Save and Continue through the next screens
+  6. On the "Test users" screen, add your own email as a test user
+  7. Click Back to Dashboard
+
+EOF
+
+open_url "https://console.cloud.google.com/auth/branding?project=$PROJECT_ID"
+
+read -r -p "Press Enter when you're done..." _
+
+# ------- Step 3C: OAuth client ID creation -------
+cat <<EOF
+
+One more page. Opening your browser now.
+
+  1. Click "Create Credentials" → "OAuth client ID"
+  2. Application type: "Desktop app"
+  3. Name: "YouCoded Personal"
+  4. Click Create
+  5. Copy the Client ID and Client Secret from the box that appears
+  6. Paste them below when prompted
+
+EOF
+
+open_url "https://console.cloud.google.com/apis/credentials?project=$PROJECT_ID"
+
+read -r -p "Client ID: " CLIENT_ID
+read -r -s -p "Client Secret: " CLIENT_SECRET
+echo
+
+if [ -z "$CLIENT_ID" ] || [ -z "$CLIENT_SECRET" ]; then
+  echo ""
+  echo "Couldn't read the credentials. Re-run /google-services-setup to try again."
+  exit 1
+fi
+
+# ------- Write credentials -------
+umask 077  # file readable only by current user
+cat > "$CREDS_FILE" <<EOF
+{
+  "client_id": "$CLIENT_ID",
+  "client_secret": "$CLIENT_SECRET",
+  "project_id": "$PROJECT_ID"
+}
+EOF
+
+echo "  ✓ Saved your permissions setup"
+```
+
+- [ ] **Step 2: Make executable, lint**
+
+```bash
+cd C:/Users/desti/youcoded-dev/.worktrees/google-services-marketplace
+chmod +x google-services/setup/consent-walkthrough.sh
+git update-index --chmod=+x google-services/setup/consent-walkthrough.sh
+shellcheck google-services/setup/consent-walkthrough.sh
+```
+
+- [ ] **Step 3: Manual walkthrough against a throwaway project**
+
+```bash
+# Assumes bootstrap-gcp.sh has already run for this $YOUCODED_OUTPUT_DIR
+bash google-services/setup/consent-walkthrough.sh
+cat "$YOUCODED_OUTPUT_DIR/oauth-credentials.json"
+```
+
+Expected: browser opens twice; after pasting, `oauth-credentials.json` contains valid client_id + secret; file mode is 0600.
+
+Idempotency test: re-run, should report "already configured" and exit without re-prompting.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add google-services/setup/consent-walkthrough.sh
+git commit -m "feat(google-services): add consent-walkthrough.sh (guided console setup)
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ```
@@ -809,9 +721,11 @@ git commit -m "feat(google-services): add smoke-test.sh (read-only probes)
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ```
 
-### Task 2.5: Write lib/gws-wrapper.sh
+### Task 2.5: Write lib/gws-wrapper.sh (AUTH_EXPIRED contract)
 
-**Spec reference:** Per-integration detail — Shared concerns.
+**Spec reference:** Per-integration detail — Shared concerns; Auto-reauth flow.
+
+The wrapper's job is to forward `gws` calls and translate auth errors into a stable exit code (**2**) + a structured stderr marker (**`AUTH_EXPIRED:<service>`**) so every skill can react uniformly. The wrapper does NOT drive reauth itself; that's Claude's job via `reauth.sh` (Task 2.5.5).
 
 **Files:**
 - Create: `wecoded-marketplace/google-services/lib/gws-wrapper.sh`
@@ -821,34 +735,47 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ```bash
 #!/usr/bin/env bash
 # gws-wrapper.sh
-# Shared helpers for the six google-services skills. Sourced (not exec'd) by
-# each skill when it needs to run gws and interpret auth errors uniformly.
+# Exposes gws_run — the single function every skill uses to invoke gws.
+# Sourced (not exec'd) via: source "$CLAUDE_PLUGIN_ROOT/lib/gws-wrapper.sh"
 #
-# Skills use `gws_run` instead of calling `gws` directly so auth-error
-# surfacing stays consistent — never six copies of "please run /google-services-setup".
+# Exit code contract (consumed by skills):
+#   0 — gws command succeeded; stdout contains gws output
+#   2 — auth expired; stderr contains exactly one line "AUTH_EXPIRED:<service>"
+#   other — any other gws error; stderr forwarded verbatim
 
 gws_auth_status() {
-  # Returns 0 if gws is authenticated for this user's default account, 1 otherwise.
+  # 0 if gws has a valid token for the current account, nonzero otherwise.
   gws auth status --json 2>/dev/null | grep -q '"authenticated": true'
 }
 
 gws_run() {
-  # Run any gws subcommand. If it fails with an auth error, emit the shared
-  # reconnect message and return 1. Otherwise forward exit code + output.
-  local out
-  if ! out=$(gws "$@" 2>&1); then
-    case "$out" in
-      *"token has been expired or revoked"*|*"invalid_grant"*|*"unauthorized"*|*"AuthenticationError"*)
-        echo "Your Google Services connection needs refreshing — run /google-services-setup to reconnect."
-        return 1
-        ;;
-      *)
-        echo "$out" >&2
-        return 1
-        ;;
-    esac
+  # First positional arg is the service (gmail, drive, docs, sheets, slides,
+  # calendar). Rest are passed through to gws.
+  local service="$1"
+
+  local out rc
+  out=$(gws "$@" 2>&1)
+  rc=$?
+
+  if [ "$rc" -eq 0 ]; then
+    printf '%s\n' "$out"
+    return 0
   fi
-  echo "$out"
+
+  # Auth-error signature detection. Patterns pinned to gws v0.22.5 error surface.
+  # Re-verify on every gws version bump (see Research Item 1 notes in spec).
+  case "$out" in
+    *"invalid_grant"*|*"token has been expired or revoked"*|\
+    *"unauthorized_client"*|*"AuthenticationError"*|\
+    *"authorization is required"*)
+      printf 'AUTH_EXPIRED:%s\n' "$service" >&2
+      return 2
+      ;;
+    *)
+      printf '%s\n' "$out" >&2
+      return "$rc"
+      ;;
+  esac
 }
 ```
 
@@ -861,19 +788,114 @@ git update-index --chmod=+x google-services/lib/gws-wrapper.sh
 shellcheck google-services/lib/gws-wrapper.sh
 ```
 
-- [ ] **Step 3: Test the wrapper by sourcing and calling**
+- [ ] **Step 3: Happy-path test**
 
 ```bash
-bash -c 'source google-services/lib/gws-wrapper.sh && gws_run gmail list --max 1 && echo OK'
+bash -c 'source google-services/lib/gws-wrapper.sh && gws_run gmail list --max 1 && echo "exit=$?"'
 ```
 
-Expected: `OK` if auth is working; the reconnect message if not.
+Expected: gws output printed; `exit=0`.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Auth-expired test**
+
+Temporarily break the auth state and verify the wrapper's signal. One way: revoke the access token in Google Account settings, then:
+
+```bash
+bash -c 'source google-services/lib/gws-wrapper.sh; gws_run gmail list --max 1; echo "exit=$?"'
+```
+
+Expected: stderr contains exactly `AUTH_EXPIRED:gmail`; exit code 2.
+
+Restore auth before continuing (run reauth.sh from Task 2.5.5 once that task is done, or /google-services-setup).
+
+- [ ] **Step 5: Commit**
 
 ```bash
 git add google-services/lib/gws-wrapper.sh
-git commit -m "feat(google-services): add gws-wrapper.sh shared helpers
+git commit -m "feat(google-services): add gws-wrapper.sh with AUTH_EXPIRED contract
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
+```
+
+### Task 2.5.5: Write reauth.sh (auto-reauth helper)
+
+**Spec reference:** Auto-reauth flow.
+
+Invoked by Claude when any skill returns exit 2. Re-runs the OAuth grant using the already-stored client credentials; does NOT touch the GCP project.
+
+**Files:**
+- Create: `wecoded-marketplace/google-services/setup/reauth.sh`
+
+- [ ] **Step 1: Write the script**
+
+```bash
+#!/usr/bin/env bash
+# reauth.sh
+# Invoked by Claude (not by the user) when a skill signals AUTH_EXPIRED.
+# Reuses the OAuth client credentials written during initial setup.
+# Exit 0 on success, 1 on failure (user closed browser, network error, etc).
+
+set -u
+
+CREDS_FILE="$HOME/.youcoded/google-services/oauth-credentials.json"
+
+if [ ! -f "$CREDS_FILE" ]; then
+  echo "No saved Google setup found. Run /google-services-setup first." >&2
+  exit 1
+fi
+
+CLIENT_ID=$(python - <<PY "$CREDS_FILE"
+import json, sys
+print(json.load(open(sys.argv[1]))["client_id"])
+PY
+)
+CLIENT_SECRET=$(python - <<PY "$CREDS_FILE"
+import json, sys
+print(json.load(open(sys.argv[1]))["client_secret"])
+PY
+)
+
+# gws auth setup re-runs the browser OAuth flow using the provided credentials.
+# The exact flag surface is version-sensitive; adjust if the pinned gws version
+# uses a different entry point (see spec's "Implementer notes" under Auto-reauth).
+gws auth setup \
+  --client-id "$CLIENT_ID" \
+  --client-secret "$CLIENT_SECRET" \
+  --non-interactive-confirm \
+  || exit 1
+
+exit 0
+```
+
+- [ ] **Step 2: Make executable, lint**
+
+```bash
+cd C:/Users/desti/youcoded-dev/.worktrees/google-services-marketplace
+chmod +x google-services/setup/reauth.sh
+git update-index --chmod=+x google-services/setup/reauth.sh
+shellcheck google-services/setup/reauth.sh
+```
+
+- [ ] **Step 3: Run against a real expired auth**
+
+Provoke `AUTH_EXPIRED` (revoke token, or wait for natural 7-day expiry during testing). Run:
+
+```bash
+bash google-services/setup/reauth.sh
+echo "exit=$?"
+```
+
+Expected: browser opens to Google consent page (NOT the unverified-app warning — that only appears on first grant); user clicks Allow; exit=0; subsequent `gws gmail list --max 1` succeeds.
+
+- [ ] **Step 4: Verify gws auth setup flag surface**
+
+The `--client-id` / `--client-secret` / `--non-interactive-confirm` flags are assumed based on the spec's design. At implementation time, run `gws auth setup --help` against the pinned version and confirm these flag names. If they differ, adjust the script and document in the commit message. If `gws auth setup` can't accept pre-supplied credentials non-interactively at all, see the spec's "Implementer notes" for fallback paths.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add google-services/setup/reauth.sh
+git commit -m "feat(google-services): add reauth.sh auto-reauth helper
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ```
@@ -937,16 +959,35 @@ Wait for Enter, then run `gcloud auth login`. If it exits nonzero, abort with:
 Sign-in didn't complete. Run /google-services-setup again when you're ready.
 ```
 
-## Step 3 — Setting it up
+## Step 3 — Setting it up (4-phase hybrid)
+
+Per the spec, this splits into (A) scripted scaffolding, (B) guided consent screen, (C) paste OAuth client credentials, (D) automated OAuth. Set the output dir once and run the scripts in order.
+
+### Step 3A — Scripted scaffold
 
 Echo "Setting up..." then run:
 
-```
-export YOUCODED_OUTPUT_DIR=$HOME/.youcoded/google-services
+```bash
+export YOUCODED_OUTPUT_DIR="$HOME/.youcoded/google-services"
 bash $PLUGIN_DIR/setup/bootstrap-gcp.sh
 ```
 
-The bootstrap script emits each `  ✓` line itself — do not add extras. If it exits nonzero, abort with the error message printed by the script.
+`bootstrap-gcp.sh` emits each `  ✓` line itself — do not add extras. If it exits nonzero, abort with the error it printed.
+
+### Step 3B + 3C — Guided console walkthrough
+
+Run:
+
+```bash
+bash $PLUGIN_DIR/setup/consent-walkthrough.sh
+```
+
+The script:
+- Prints the Step 3B block ("One quick thing I can't do for you automatically...") and opens Cloud Console's OAuth Consent Screen page. Waits for user to press Enter.
+- Prints the Step 3C block ("One more page...") and opens Cloud Console's Credentials page. Prompts for client ID and client secret paste-in.
+- Writes `$YOUCODED_OUTPUT_DIR/oauth-credentials.json`.
+
+If it exits nonzero, abort with the error it printed.
 
 ## Step 4 — Unverified-app warning
 
@@ -987,7 +1028,7 @@ your Drive files, and so on. Please check every box — leaving
 any unchecked will cause some features to not work.
 ```
 
-Run `gws auth setup` using the credentials from `$YOUCODED_OUTPUT_DIR/oauth-credentials.json`. If it exits nonzero, abort with:
+Run `gws auth setup --client-id <id> --client-secret <secret>` sourcing the credentials from `$YOUCODED_OUTPUT_DIR/oauth-credentials.json` (parse via `python -c "import json; ..."`). If `gws auth setup` exits nonzero, abort with:
 
 ```
 Looks like you didn't finish approving the permissions. When
@@ -1090,9 +1131,19 @@ If the user's Gmail language is non-English, system labels (Inbox, Sent, Drafts)
 
 When the user asks to "send," use `gws_run gmail send`. When they ask to "draft" or "prepare," use `gws_run gmail draft`. Never leave both a draft AND a sent copy — pick one.
 
-## Auth failure
+## Handling auth expiry
 
-If `gws_run` returns the "needs refreshing" message, surface it verbatim and stop.
+Every call uses `gws_run`, which exits **2** with stderr line `AUTH_EXPIRED:<service>` when the user's 7-day OAuth refresh has lapsed.
+
+**When this skill sees exit 2:**
+1. Stop the current operation immediately. Do NOT retry automatically.
+2. Emit a single marker line Claude can read: `[reauth-required: <service>]`.
+
+**What Claude does next (follow this verbatim):**
+1. Tell the user briefly, in natural language: *"Your Google connection needs a quick refresh — I'll open a browser. Approve the permissions and I'll finish {what the user asked for}."*
+2. Run `bash "$CLAUDE_PLUGIN_ROOT/setup/reauth.sh"`.
+3. On reauth exit 0: retry the original `gws_run` call with the same arguments, then complete the user's request as if nothing happened.
+4. On reauth exit 1: tell the user plainly, *"I couldn't refresh the Google connection. Want me to try again, or come back to this later?"*
 ```
 
 - [ ] **Step 2: Validate YAML frontmatter parses**
@@ -1156,9 +1207,19 @@ Default searches and operations target My Drive. If the user mentions a specific
 
 Google-native formats (Docs, Sheets, Slides) download as their native Google format by default. To convert to Office formats, pass `--export-mime application/vnd.openxmlformats-officedocument.wordprocessingml.document` (or the Excel / PowerPoint equivalent).
 
-## Auth failure
+## Handling auth expiry
 
-Shared wrapper handles it — surface verbatim and stop.
+Every call uses `gws_run`, which exits **2** with stderr line `AUTH_EXPIRED:<service>` when the user's 7-day OAuth refresh has lapsed.
+
+**When this skill sees exit 2:**
+1. Stop the current operation immediately. Do NOT retry automatically.
+2. Emit a single marker line Claude can read: `[reauth-required: <service>]`.
+
+**What Claude does next (follow this verbatim):**
+1. Tell the user briefly, in natural language: *"Your Google connection needs a quick refresh — I'll open a browser. Approve the permissions and I'll finish {what the user asked for}."*
+2. Run `bash "$CLAUDE_PLUGIN_ROOT/setup/reauth.sh"`.
+3. On reauth exit 0: retry the original `gws_run` call with the same arguments, then complete the user's request as if nothing happened.
+4. On reauth exit 1: tell the user plainly, *"I couldn't refresh the Google connection. Want me to try again, or come back to this later?"*
 ```
 
 - [ ] **Step 2: Validate + commit**
@@ -1213,9 +1274,19 @@ source "$CLAUDE_PLUGIN_ROOT/lib/gws-wrapper.sh"
 
 If the user names the doc ("read my budget doc"), call google-drive first to find the ID, then pass the ID here.
 
-## Auth failure
+## Handling auth expiry
 
-Wrapper handles it.
+Every call uses `gws_run`, which exits **2** with stderr line `AUTH_EXPIRED:<service>` when the user's 7-day OAuth refresh has lapsed.
+
+**When this skill sees exit 2:**
+1. Stop the current operation immediately. Do NOT retry automatically.
+2. Emit a single marker line Claude can read: `[reauth-required: <service>]`.
+
+**What Claude does next (follow this verbatim):**
+1. Tell the user briefly, in natural language: *"Your Google connection needs a quick refresh — I'll open a browser. Approve the permissions and I'll finish {what the user asked for}."*
+2. Run `bash "$CLAUDE_PLUGIN_ROOT/setup/reauth.sh"`.
+3. On reauth exit 0: retry the original `gws_run` call with the same arguments, then complete the user's request as if nothing happened.
+4. On reauth exit 1: tell the user plainly, *"I couldn't refresh the Google connection. Want me to try again, or come back to this later?"*
 ```
 
 - [ ] **Step 2: Validate + commit**
@@ -1273,9 +1344,19 @@ Default A1. Use R1C1 only if the user explicitly asks in that notation.
 
 Call google-drive first if the user names it rather than gives an ID.
 
-## Auth failure
+## Handling auth expiry
 
-Wrapper handles it.
+Every call uses `gws_run`, which exits **2** with stderr line `AUTH_EXPIRED:<service>` when the user's 7-day OAuth refresh has lapsed.
+
+**When this skill sees exit 2:**
+1. Stop the current operation immediately. Do NOT retry automatically.
+2. Emit a single marker line Claude can read: `[reauth-required: <service>]`.
+
+**What Claude does next (follow this verbatim):**
+1. Tell the user briefly, in natural language: *"Your Google connection needs a quick refresh — I'll open a browser. Approve the permissions and I'll finish {what the user asked for}."*
+2. Run `bash "$CLAUDE_PLUGIN_ROOT/setup/reauth.sh"`.
+3. On reauth exit 0: retry the original `gws_run` call with the same arguments, then complete the user's request as if nothing happened.
+4. On reauth exit 1: tell the user plainly, *"I couldn't refresh the Google connection. Want me to try again, or come back to this later?"*
 ```
 
 - [ ] **Step 2: Validate + commit**
@@ -1290,26 +1371,22 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 ### Task 3.5: Write skills/google-slides/SKILL.md
 
-**Spec reference:** Per-integration detail — Google Slides. Branch depends on Task 0.3 research outcome.
+**Spec reference:** Per-integration detail — Google Slides (Research Item 3 resolved GREEN — full read + write).
 
 **Files:**
 - Create: `wecoded-marketplace/google-services/skills/google-slides/SKILL.md`
 
-- [ ] **Step 1: Confirm write-support state from Task 0.3 findings**
-
-Open `docs/superpowers/plans/research/2026-04-16-gws-slides-coverage.md`. Use the GREEN skill below if research found full writes; use the RED variant if read-only only.
-
-- [ ] **Step 2: Write the skill (GREEN version shown)**
+- [ ] **Step 1: Write the skill**
 
 ```markdown
 ---
 name: google-slides
-description: "Use when the user wants to read, create, or export a Google Slides deck. Triggers on: what's in my presentation, create a deck, read slide 3, export deck as PDF. File-find operations belong to google-drive."
+description: "Use when the user wants to read, create, edit, or export a Google Slides deck. Triggers on: what's in my presentation, create a deck, add a slide, replace text on slide 3, export deck as PDF. File-find operations belong to google-drive."
 ---
 
 # Google Slides
 
-Content-level operations on Google Slides decks. File-find operations belong to google-drive.
+Content-level operations on Google Slides decks. File-find belongs to google-drive; PDF export and listing decks hop to `gws drive` (per Google's own API design — Slides doesn't own those).
 
 ```bash
 source "$CLAUDE_PLUGIN_ROOT/lib/gws-wrapper.sh"
@@ -1319,31 +1396,51 @@ source "$CLAUDE_PLUGIN_ROOT/lib/gws-wrapper.sh"
 
 | Task | Command |
 |------|---------|
-| Read deck | `gws_run slides get <deck-id>` |
-| Create deck | `gws_run slides create --title "<t>"` |
-| Add slide | `gws_run slides slide add <deck-id> --layout TITLE_AND_BODY` |
-| Export PDF | `gws_run slides export <deck-id> --format pdf --out <path>` |
+| Read deck | `gws_run slides presentations get <deck-id>` |
+| Create deck | `gws_run slides presentations create --title "<t>"` |
+| Mutate deck | `gws_run slides presentations batchUpdate <deck-id> --requests '<json>'` |
+| Export PDF | `gws_run drive files export <deck-id> --mime-type application/pdf --out <path>` |
+| List decks | `gws_run drive files list --q "mimeType='application/vnd.google-apps.presentation'" --max 20` |
+
+## batchUpdate — the write path
+
+All edits (add/remove slides, insert/replace text, change layouts, images, tables) go through `batchUpdate` as a JSON array of request objects. Prefer batching multiple edits in one call over chaining many single-edit calls. Three common recipes:
+
+**Add a title slide:**
+```json
+[{"createSlide": {"insertionIndex": 0, "slideLayoutReference": {"predefinedLayout": "TITLE"}}}]
+```
+
+**Insert text into an existing text box:**
+```json
+[{"insertText": {"objectId": "<element-id>", "text": "Hello", "insertionIndex": 0}}]
+```
+
+**Replace all instances of a string across the deck:**
+```json
+[{"replaceAllText": {"containsText": {"text": "{{date}}"}, "replaceText": "2026-04-16"}}]
+```
 
 ## Slide structure
 
-`slides get` returns JSON with slides, each containing pageElements (text boxes, images, shapes). When summarizing for the user, extract the text content from text boxes.
+`presentations get` returns JSON with `slides[]`, each containing `pageElements` (text boxes, images, shapes). When summarizing for the user, extract text content from each text box. When making edits, use the element's `objectId` from this response.
 
-## Auth failure
+## Handling auth expiry
 
-Wrapper handles it.
+Every call uses `gws_run`, which exits **2** with stderr line `AUTH_EXPIRED:<service>` when the user's 7-day OAuth refresh has lapsed.
+
+**When this skill sees exit 2:**
+1. Stop the current operation immediately. Do NOT retry automatically.
+2. Emit a single marker line Claude can read: `[reauth-required: <service>]`.
+
+**What Claude does next (follow this verbatim):**
+1. Tell the user briefly, in natural language: *"Your Google connection needs a quick refresh — I'll open a browser. Approve the permissions and I'll finish {what the user asked for}."*
+2. Run `bash "$CLAUDE_PLUGIN_ROOT/setup/reauth.sh"`.
+3. On reauth exit 0: retry the original `gws_run` call with the same arguments, then complete the user's request as if nothing happened.
+4. On reauth exit 1: tell the user plainly, *"I couldn't refresh the Google connection. Want me to try again, or come back to this later?"*
 ```
 
-**RED variant (read-only — use if Task 0.3 returned RED):**
-
-Replace "## Core commands" onward with a table containing only the `get` and `export` rows, and add this note:
-
-```markdown
-## v1 limitation
-
-This version of the bundle supports reading and exporting Slides decks. Creating or editing slides is not yet available — `gws` does not support those operations at this version. Follow-up issue: #TODO.
-```
-
-- [ ] **Step 3: Validate + commit**
+- [ ] **Step 2: Validate + commit**
 
 ```bash
 python -c "import yaml; f=open('google-services/skills/google-slides/SKILL.md'); content=f.read(); fm=content.split('---')[1]; print(yaml.safe_load(fm))"
@@ -1400,9 +1497,19 @@ Events return in each calendar's default TZ. When formatting for the user, conve
 
 For "when am I free today" / "free/busy" questions, use `gws_run calendar freebusy --start <iso> --end <iso> --calendars primary`.
 
-## Auth failure
+## Handling auth expiry
 
-Wrapper handles it.
+Every call uses `gws_run`, which exits **2** with stderr line `AUTH_EXPIRED:<service>` when the user's 7-day OAuth refresh has lapsed.
+
+**When this skill sees exit 2:**
+1. Stop the current operation immediately. Do NOT retry automatically.
+2. Emit a single marker line Claude can read: `[reauth-required: <service>]`.
+
+**What Claude does next (follow this verbatim):**
+1. Tell the user briefly, in natural language: *"Your Google connection needs a quick refresh — I'll open a browser. Approve the permissions and I'll finish {what the user asked for}."*
+2. Run `bash "$CLAUDE_PLUGIN_ROOT/setup/reauth.sh"`.
+3. On reauth exit 0: retry the original `gws_run` call with the same arguments, then complete the user's request as if nothing happened.
+4. On reauth exit 1: tell the user plainly, *"I couldn't refresh the Google connection. Want me to try again, or come back to this later?"*
 ```
 
 - [ ] **Step 2: Validate + commit**
@@ -1435,16 +1542,16 @@ This checklist runs on a clean test machine before `google-services` is allowed 
 
 - [ ] `/google-services-setup` completes end-to-end on macOS, Windows, Linux with no pre-existing `gcloud` or `gws` installed.
 - [ ] Idempotent re-run with existing valid auth reports "already set up" and skips to probes.
-- [ ] Partial-state re-run (simulate network drop between API-enable and OAuth-client-create) detects existing project and resumes correctly, does NOT create a second project.
+- [ ] Partial-state re-run (re-run after bootstrap-gcp.sh but before consent-walkthrough.sh completes) detects existing project, skips project creation, resumes at the consent walkthrough.
 - [ ] Gmail round-trip: send draft to self → fetch → delete. Leaves no residue.
 - [ ] Drive round-trip: upload → list → download → trash.
 - [ ] Docs round-trip: create → read → trash.
 - [ ] Sheets round-trip: create → write A1 → read A1 → trash.
-- [ ] Slides round-trip (or read-only if Research Item 3 ruled out writes).
+- [ ] Slides round-trip: create deck → batchUpdate to add a slide with text → get → `drive files export` to PDF → trash.
 - [ ] Calendar round-trip: create event → list → delete.
 - [ ] Migration: test machine with pre-installed `youcoded-drive` + `claudes-inbox` on hosted Gmail — setup cleans all artifacts.
 - [ ] Skill discovery: compound prompts ("send an email with last week's budget sheet attached") route cleanly to one primary skill.
-- [ ] Refresh-token behavior observed over 10 days to validate Research Item 1's answer.
+- [ ] Auto-reauth end-to-end: revoke the OAuth token manually (or wait for natural 7-day expiry), ask Claude a Google-related question, verify Claude detects AUTH_EXPIRED signal from the wrapper, runs reauth.sh, completes the user's request after the one-click browser consent — without any manual slash command from the user.
 ```
 
 - [ ] **Step 2: Commit**
@@ -1505,15 +1612,28 @@ gws sheets values get "$sid" --range "A1" | grep -q "hello" && echo OK
 gws drive trash "$sid" && echo CLEANED
 ```
 
-- [ ] **Step 5: Slides round-trip**
-
-(Skip writes if research item 3 returned RED. In that case, test read-only: fetch a deck by ID and verify structure parses.)
+- [ ] **Step 5: Slides round-trip (via batchUpdate)**
 
 ```bash
-deckid=$(gws slides create --title "YouCoded Smoke" --json | jq -r .presentationId)
-gws slides slide add "$deckid" --layout TITLE_AND_BODY
-gws slides get "$deckid" | jq '.slides | length' | grep -q "^[1-9]" && echo OK
-gws drive trash "$deckid" && echo CLEANED
+# Create deck
+deckid=$(gws slides presentations create --title "YouCoded Smoke" --json | jq -r .presentationId)
+
+# Add a slide + insert text via batchUpdate
+gws slides presentations batchUpdate "$deckid" --requests '[
+  {"createSlide": {"insertionIndex": 1, "slideLayoutReference": {"predefinedLayout": "TITLE_AND_BODY"}}}
+]'
+
+# Verify the deck now has >=2 slides
+count=$(gws slides presentations get "$deckid" --json | jq '.slides | length')
+[ "$count" -ge 2 ] && echo OK
+
+# Export to PDF through drive
+gws drive files export "$deckid" --mime-type application/pdf --out /tmp/yc-slides-smoke.pdf
+[ -s /tmp/yc-slides-smoke.pdf ] && echo EXPORTED
+
+# Cleanup
+gws drive files trash "$deckid" && echo CLEANED
+rm /tmp/yc-slides-smoke.pdf
 ```
 
 - [ ] **Step 6: Calendar round-trip**
@@ -1582,15 +1702,62 @@ Expected output begins "Found existing YouCoded connection..." and ends with the
 
 - [ ] **Step 2: Simulate partial-state**
 
-Create a throwaway user account, run setup to completion of Step 3 API-enable, then kill it (Ctrl-C) before OAuth client creation.
+Create a throwaway user account, run setup to completion of Step 3A (bootstrap-gcp.sh done, APIs enabled) then kill it (Ctrl-C) before consent-walkthrough.sh finishes.
 
-Re-run `/google-services-setup`. Expected: detects existing project, resumes at OAuth client creation, completes.
+Re-run `/google-services-setup`. Expected: detects existing project (bootstrap skips recreation), resumes at the consent walkthrough. Does NOT create a second project.
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add google-services/docs/DEV-VERIFICATION.md
 git commit -m "verify(google-services): idempotency and partial-state resume confirmed
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
+```
+
+### Task 4.5: Auto-reauth end-to-end test
+
+**Spec reference:** Auto-reauth flow.
+
+**Files:** `DEV-VERIFICATION.md` checkbox ticks.
+
+This is the most important test for v1 — the user experience of the 7-day reauth cycle lives or dies here.
+
+- [ ] **Step 1: Force an auth-expired state**
+
+Option A (fastest): go to https://myaccount.google.com/permissions and revoke access for "YouCoded Personal." This invalidates the refresh token immediately.
+
+Option B (natural): wait 7 days after setup.
+
+- [ ] **Step 2: In a fresh Claude session with google-services installed, ask a Google-related question**
+
+Example prompts:
+- *"send a test email to myself with the subject 'reauth test'"*
+- *"what's on my calendar tomorrow"*
+- *"what are the last 3 files in my Drive"*
+
+- [ ] **Step 3: Observe Claude's behavior**
+
+Expected flow:
+1. Claude picks the correct skill (e.g., gmail for the email prompt).
+2. Skill calls `gws_run`. Wrapper returns exit 2 + `AUTH_EXPIRED:<service>` on stderr.
+3. Skill prints `[reauth-required: <service>]`.
+4. Claude says something like: *"Your Google connection needs a quick refresh — I'll open a browser. Approve the permissions and I'll finish sending that email."*
+5. Claude runs `bash "$CLAUDE_PLUGIN_ROOT/setup/reauth.sh"`.
+6. Default browser opens to Google's consent page. User clicks Allow.
+7. `reauth.sh` exits 0.
+8. Claude retries the original `gws_run` call. Succeeds.
+9. User's original request completes. Claude reports done.
+
+**Failure modes to probe separately:**
+- Close the browser mid-reauth → reauth.sh exits 1; Claude tells user plainly and offers retry.
+- Cancel the OAuth consent → same as above.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add google-services/docs/DEV-VERIFICATION.md
+git commit -m "verify(google-services): auto-reauth end-to-end flow confirmed
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ```
@@ -1991,22 +2158,9 @@ Decomposed into per-bundle specs under docs/superpowers/specs/. First bundle
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ```
 
-### Task 6.4: Post-ship: refresh-token observation window
-
-**Files:** `docs/superpowers/plans/research/2026-04-16-refresh-token-findings.md` updates if outcome differs from Task 0.1's prediction.
-
-- [ ] **Step 1: Set a calendar reminder for 10 days from ship date**
-
-At day 10, pull up Destin's personal setup and attempt a `gws gmail list --max 1`.
-
-- [ ] **Step 2: Record outcome**
-
-If it works: no-op; close the research item.
-If it fails: confirm Task 0.1's fallback branch was correct. If the fallback wasn't taken (e.g., Task 0.1 returned GREEN but reality is RED at 10 days), file an urgent fix issue and re-open the OAuth strategy question.
-
 ---
 
-## Self-review
+## Self-review (revised post-research)
 
 ### Spec coverage
 
@@ -2017,39 +2171,43 @@ If it fails: confirm Task 0.1's fallback branch was correct. If the fallback was
 | Scope — Out of scope | Documented in plugin.json + spec; no task needed |
 | Foundation — gws | Task 2.2 (install-gws.sh) |
 | Foundation — gcloud | Task 2.1 (install-gcloud.sh) |
-| OAuth strategy | Task 0.1 research + Task 2.3 (bootstrap-gcp.sh) |
+| OAuth strategy (BYO-GCP with auto-reauth) | Tasks 2.3 (bootstrap-gcp.sh) + 2.3.5 (consent-walkthrough.sh) + 2.5 (wrapper) + 2.5.5 (reauth.sh) |
 | User-facing language policy | Enforced in Task 2.6 (slash command); spot-checked in every Phase 2/3 task |
 | Architecture — Plugin layout | Task 1.2 |
 | Architecture — How skills invoke gws | Tasks 2.5 (wrapper) + 3.1–3.6 (skills) |
 | Architecture — How setup works | Task 2.6 |
 | Architecture — Skill discovery | Tasks 3.1–3.6 + Task 4.3 (matcher test) |
-| User-facing flow Step 0–7 | Task 2.6 (slash command authoritative) |
+| User-facing flow Step 0–7 | Task 2.6 (slash command authoritative); Step 3 hybrid split across Tasks 2.3 + 2.3.5 |
+| Auto-reauth flow | Tasks 2.5 (AUTH_EXPIRED contract) + 2.5.5 (reauth.sh) + 3.1–3.6 (each skill's "Handling auth expiry" section) + 4.5 (end-to-end test) |
 | Per-integration — Gmail | Task 3.1 |
 | Per-integration — Drive | Task 3.2 |
 | Per-integration — Docs | Task 3.3 |
 | Per-integration — Sheets | Task 3.4 |
-| Per-integration — Slides | Task 3.5 + research branch in Task 0.3 |
+| Per-integration — Slides (GREEN: full read+write via batchUpdate) | Task 3.5 |
 | Per-integration — Calendar | Task 3.6 |
 | Per-integration — Shared concerns | Task 2.5 |
 | Migration — registry changes | Tasks 5.1–5.4 |
 | Migration — user-machine reconciliation | Task 5.6 |
 | Migration — pre-ship verification | Task 5.7 |
-| Failure modes | Handled in scripts (Tasks 2.1–2.4); no dedicated spec section task |
-| Research items 1–3 | Tasks 0.1–0.4 |
-| Dev-time verification checklist | Tasks 4.1–4.4 |
-| Out of scope (v1) | Not implemented by design |
+| Failure modes | Handled in scripts (Tasks 2.1–2.4 + 2.3.5 + 2.5.5); no dedicated spec section task |
+| Research outcomes (resolved 2026-04-16) | Phase 0 summary; docs/superpowers/plans/research/ findings committed |
+| Dev-time verification checklist | Tasks 4.1–4.5 |
+| Out of scope (v1) including v2 verified-app note | Not implemented by design |
 
 No gaps.
 
 ### Placeholder scan
 
-All code blocks contain real code. The one "TODO" reference (in Slides RED-variant skill) is an explicit follow-up issue pointer, not an unfinished step.
+All code blocks contain real code. One deliberate note in the plan: `gws auth setup --client-id` flag surface in reauth.sh (Task 2.5.5 Step 4) requires verification against pinned gws version at implementation time — explicit "verify this" step in the task, not a placeholder.
 
 ### Type consistency
 
-- `gws_run` function — consistent across all six skills (Tasks 3.1–3.6) and the wrapper (Task 2.5).
+- `gws_run <service> <args>` — consistent across all six skills and the wrapper (Task 2.5). Service is always the first positional arg.
+- `AUTH_EXPIRED:<service>` — stable stderr marker emitted by wrapper (Task 2.5), matched by every skill's auth-expiry section (Tasks 3.1–3.6), produces `[reauth-required: <service>]` for Claude.
 - `CLAUDE_PLUGIN_ROOT` — used identically in all skill SKILL.md files.
-- `YOUCODED_OUTPUT_DIR` — set in the slash command (Task 2.6), consumed in bootstrap-gcp.sh (Task 2.3). Name matches.
+- `YOUCODED_OUTPUT_DIR` — set in the slash command (Task 2.6), consumed in bootstrap-gcp.sh (Task 2.3) and consent-walkthrough.sh (Task 2.3.5). Name matches.
+- `PROJECT_ID` — emitted by bootstrap-gcp.sh to `$YOUCODED_OUTPUT_DIR/project.env` (Task 2.3), sourced by consent-walkthrough.sh (Task 2.3.5). Name matches.
+- `oauth-credentials.json` — written by consent-walkthrough.sh (Task 2.3.5), read by reauth.sh (Task 2.5.5) and the slash command Step 5 (Task 2.6). Schema: `{client_id, client_secret, project_id}`.
 - `PROJECT_ID` — set by bootstrap-gcp.sh, consumed for the warning screen in Task 2.6. Matches.
 
 No drift.
