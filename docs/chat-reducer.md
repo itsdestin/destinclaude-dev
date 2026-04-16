@@ -1,6 +1,6 @@
 # Chat Reducer Architecture
 
-Chat state lives in `destincode/desktop/src/renderer/state/chat-reducer.ts` with types in `chat-types.ts`. A few non-obvious invariants govern how tool activity and turns are scoped.
+Chat state lives in `youcoded/desktop/src/renderer/state/chat-reducer.ts` with types in `chat-types.ts`. A few non-obvious invariants govern how tool activity and turns are scoped.
 
 ## Tool activity scoping
 

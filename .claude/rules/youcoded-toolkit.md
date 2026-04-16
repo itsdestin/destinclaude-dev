@@ -1,12 +1,12 @@
 ---
 paths:
-  - "destinclaude/**"
+  - "youcoded-core/**"
 last_verified: 2026-04-11
 ---
 
-# DestinClaude Toolkit Rules
+# YouCoded Toolkit Rules
 
-You are editing the DestinClaude toolkit. Read `docs/toolkit-structure.md` for full context.
+You are editing the YouCoded toolkit. Read `docs/toolkit-structure.md` for full context.
 
 ## Structure
 

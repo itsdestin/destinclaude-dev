@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Setup script for the destinclaude-dev workspace.
+# Setup script for the youcoded-dev workspace.
 # Clones or pulls the latest from all project repos into the current directory.
 
 set -euo pipefail
 
 REPOS=(
-  "itsdestin/destincode:master"
-  "itsdestin/destinclaude:master"
-  "itsdestin/destinclaude-admin:master"
-  "itsdestin/destinclaude-themes:main"
-  "itsdestin/destincode-marketplace:master"
+  "itsdestin/youcoded:master"
+  "itsdestin/youcoded-core:master"
+  "itsdestin/youcoded-admin:master"
+  "itsdestin/wecoded-themes:main"
+  "itsdestin/wecoded-marketplace:master"
 )
 
 for entry in "${REPOS[@]}"; do

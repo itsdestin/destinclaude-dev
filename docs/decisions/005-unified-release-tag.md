@@ -5,11 +5,11 @@
 
 ## Context
 
-DestinCode ships both a desktop app (Windows/Mac/Linux via Electron) and an Android app. Originally, desktop used `desktop-v*` tags and Android used `android-v*` tags. This created confusion: users would see "v2.3.1 desktop" and "v2.3.0 Android" and ask which to install.
+YouCoded ships both a desktop app (Windows/Mac/Linux via Electron) and an Android app. Originally, desktop used `desktop-v*` tags and Android used `android-v*` tags. This created confusion: users would see "v2.3.1 desktop" and "v2.3.0 Android" and ask which to install.
 
 ## Decision
 
-Unify on `vX.Y.Z` tags. A single tag in destincode triggers both `android-release.yml` and `desktop-release.yml`, and both workflows upload artifacts to the same GitHub Release.
+Unify on `vX.Y.Z` tags. A single tag in youcoded triggers both `android-release.yml` and `desktop-release.yml`, and both workflows upload artifacts to the same GitHub Release.
 
 - **Desktop**: CI extracts version from the tag (`v2.3.2` → `2.3.2`) and patches `desktop/package.json` before build
 - **Android**: `versionName` matches the tag; `versionCode` (integer) must be manually bumped in `app/build.gradle.kts` BEFORE tagging

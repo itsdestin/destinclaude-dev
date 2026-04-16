@@ -76,7 +76,7 @@ session, on, off, removeAllListeners, skills, marketplace, dialog, shell, remote
 
 ### Features added AFTER last CLAUDE.md update (2026-04-07) — NOT documented anywhere:
 
-**destincode:**
+**youcoded:**
 - Unified marketplace integration (merged branch)
 - Guided sync setup wizard for non-technical users
 - Glass sliders + per-theme CSS overrides system
@@ -85,33 +85,33 @@ session, on, off, removeAllListeners, skills, marketplace, dialog, shell, remote
 - Status bar derived metrics (cache hit rate, active ratio, output speed)
 - Non-Claude session support (Gemini CLI)
 
-**destinclaude:**
+**youcoded-core:**
 - Output styles system (conversational, academic, professional)
 - Theme builder overhaul (bubble-blur/opacity fields)
 - Landing page marketplace showcase
 
-**destinclaude-admin:**
+**youcoded-admin:**
 - PartyKit deploy verification in release flow
 - Plugin.json discovery system
 
-**destinclaude-themes:**
+**wecoded-themes:**
 - Theme registry with previewTokens (CSS-based card previews)
 - Playwright-based preview PNG generator
 - /themes/ subdirectory structure with manifest-based asset inclusion
 
-**destincode-marketplace:**
+**wecoded-marketplace:**
 - Registry restructure: /skills/ and /themes/ directories
 - sync.js rewrite with diffing, version tracking, deprecation
 - CI validation workflow for community plugin PRs
 
 ### Deleted features:
-- `rebuild-stats` workflow removed from destincode-marketplace
+- `rebuild-stats` workflow removed from wecoded-marketplace
 
 ### Repos with NO CLAUDE.md:
-- destinclaude/ (toolkit itself)
-- destinclaude-admin/
-- destinclaude-themes/
-- destincode-marketplace/
+- youcoded-core/ (toolkit itself)
+- youcoded-admin/
+- wecoded-themes/
+- wecoded-marketplace/
 
 ---
 
@@ -119,7 +119,7 @@ session, on, off, removeAllListeners, skills, marketplace, dialog, shell, remote
 
 | Claim | Status | Evidence |
 |-------|--------|---------|
-| build-web-ui.sh bundles desktop/dist/renderer/ into app/src/main/assets/web/ | CONFIRMED | Script at destincode/scripts/build-web-ui.sh:14-27, called at android-release.yml:35 |
+| build-web-ui.sh bundles desktop/dist/renderer/ into app/src/main/assets/web/ | CONFIRMED | Script at youcoded/scripts/build-web-ui.sh:14-27, called at android-release.yml:35 |
 | Desktop version from git tag, CI patches package.json | CONFIRMED | desktop-release.yml:40-46, strips v prefix and patches |
 | Android needs manual versionCode + versionName bump in build.gradle.kts | CONFIRMED | app/build.gradle.kts:23-24, currently versionCode=7, versionName="2.3.2" |
 | One vX.Y.Z tag triggers both workflows | CONFIRMED | Both trigger on `v*` pattern, both upload to same release |

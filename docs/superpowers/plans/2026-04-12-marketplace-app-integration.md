@@ -7,7 +7,7 @@
 **Goal:** Wire the desktop (Electron + React) and Android (Kotlin + WebView) apps to the already-deployed marketplace backend so users can sign in with GitHub, install counts tick up, ratings submit with install-gate, theme likes toggle, and reports queue for moderation. Ship as one coherent feature, not in slivers.
 
 **Architecture:**
-- The backend is live at `https://destincode-marketplace-api.destinj101.workers.dev`. Auth is GitHub OAuth device-code (app opens browser, polls for token, stores bearer token locally).
+- The backend is live at `https://wecoded-marketplace-api.destinj101.workers.dev`. Auth is GitHub OAuth device-code (app opens browser, polls for token, stores bearer token locally).
 - Desktop stores the token in Electron `userData` via a new `marketplace-auth-store.ts`. Android stores it in `SharedPreferences` via a new bridge message type. Same token is sent as `Authorization: Bearer <token>` on all write endpoints.
 - The existing marketplace UI (`components/Marketplace.tsx`, `components/SkillCard.tsx`) gains install counts + star ratings from a new live stats fetcher that replaces the static `stats.json` read.
 - New rating/like/report components are all plain React — they work on Android automatically via the shared React bundle. Only the IPC message types need Kotlin-side handlers on Android.
@@ -19,14 +19,14 @@
 - Vitest for React component tests (existing harness)
 
 **Repo locations:**
-- Desktop: `destincode/desktop/src/` (both `main/` and `renderer/`)
-- Android: `destincode/app/src/main/java/.../runtime/SessionService.kt` (bridge message dispatcher, currently 92 types; this plan adds 4 more)
+- Desktop: `youcoded/desktop/src/` (both `main/` and `renderer/`)
+- Android: `youcoded/app/src/main/java/.../runtime/SessionService.kt` (bridge message dispatcher, currently 92 types; this plan adds 4 more)
 
 ---
 
 ## Backend contract (for reference during implementation)
 
-**Base URL:** `https://destincode-marketplace-api.destinj101.workers.dev`
+**Base URL:** `https://wecoded-marketplace-api.destinj101.workers.dev`
 
 | Method | Path | Auth | Body | Response |
 |---|---|---|---|---|
@@ -51,7 +51,7 @@
 ## File Structure
 
 ```
-destincode/desktop/src/
+youcoded/desktop/src/
 ├── main/
 │   ├── marketplace-auth-store.ts         # NEW: electron-store for bearer token (Task 2)
 │   ├── marketplace-api-handlers.ts       # NEW: IPC bridge to Worker (Task 3)
@@ -77,7 +77,7 @@ destincode/desktop/src/
 │       └── Marketplace.tsx               # MODIFY: mount SignInButton in header (Task 8)
 └── __tests__/marketplace/                # NEW: component tests (each task)
 
-destincode/app/src/main/java/.../runtime/
+youcoded/app/src/main/java/.../runtime/
 └── SessionService.kt                     # MODIFY: add 4 new bridge message handlers (Task 13)
 ```
 
@@ -90,16 +90,16 @@ destincode/app/src/main/java/.../runtime/
 
 ## Prerequisites
 
-- Plan 1 merged and deployed. Verify: `curl https://destincode-marketplace-api.destinj101.workers.dev/health` returns `{"ok":true}`.
-- Local checkout of `destincode` synced to latest master.
-- A new git worktree created for this plan's work. From `destincode/`:
+- Plan 1 merged and deployed. Verify: `curl https://wecoded-marketplace-api.destinj101.workers.dev/health` returns `{"ok":true}`.
+- Local checkout of `youcoded` synced to latest master.
+- A new git worktree created for this plan's work. From `youcoded/`:
   ```bash
   git fetch origin && git pull origin master
-  git worktree add -b marketplace-app-integration ../destincode-marketplace-app master
-  cd ../destincode-marketplace-app
+  git worktree add -b marketplace-app-integration ../wecoded-marketplace-app master
+  cd ../wecoded-marketplace-app
   ```
 - `npm ci` inside `desktop/`.
-- Optional: run `bash destincode-marketplace/worker/scripts/smoke-test.sh https://destincode-marketplace-api.destinj101.workers.dev` to confirm backend is live.
+- Optional: run `bash wecoded-marketplace/worker/scripts/smoke-test.sh https://wecoded-marketplace-api.destinj101.workers.dev` to confirm backend is live.
 
 ---
 
@@ -187,7 +187,7 @@ cd desktop && npx vitest run marketplace-api-client
 - [ ] **Step 3: Implement `marketplace-api-client.ts`**
 
 ```ts
-export const MARKETPLACE_API_HOST = "https://destincode-marketplace-api.destinj101.workers.dev";
+export const MARKETPLACE_API_HOST = "https://wecoded-marketplace-api.destinj101.workers.dev";
 
 export class MarketplaceApiError extends Error {
   constructor(public readonly status: number, message: string) {
@@ -779,7 +779,7 @@ Mount it in the Marketplace modal header, right-aligned.
 
 - [ ] **Step 2: Snapshot test** for both states (signed in, signed out, pending).
 
-- [ ] **Step 3: Manual test on desktop** — run `bash scripts/run-dev.sh` from the destincode root, open Marketplace, click sign in, complete the browser flow, verify the user chip shows up.
+- [ ] **Step 3: Manual test on desktop** — run `bash scripts/run-dev.sh` from the youcoded root, open Marketplace, click sign in, complete the browser flow, verify the user chip shows up.
 
 - [ ] **Step 4: Commit**
 
@@ -827,7 +827,7 @@ Critical gotcha: **ratings require a prior install**. Call `window.claude.market
 - [ ] **Step 0: Add backend endpoint** to list visible reviews for a plugin.
 
 This task has a cross-plan dependency. Either:
-- (A) Add `GET /ratings/:plugin_id` to the Worker as a prerequisite. This is ~30 LOC — one new route, one test. Do it in a tiny follow-up PR on destincode-marketplace before completing Task 10.
+- (A) Add `GET /ratings/:plugin_id` to the Worker as a prerequisite. This is ~30 LOC — one new route, one test. Do it in a tiny follow-up PR on wecoded-marketplace before completing Task 10.
 - (B) Ship rating submission only in this task; defer the review list to a follow-up.
 
 Plan doc authors chose (A). Walk through with the user before committing to (B) if you get here.
@@ -869,7 +869,7 @@ Heart icon toggle. Fills when liked, outline when not. Count shown next to it (f
 ## Task 13: Android IPC parity
 
 **Files:**
-- Modify: `app/src/main/java/com/itsdestin/destinclaude/runtime/SessionService.kt`
+- Modify: `app/src/main/java/com/itsdestin/youcoded-core/runtime/SessionService.kt`
 
 Add 10 new `when` cases in `handleBridgeMessage()` for the message types added in Task 4. Each case is a simple pass-through to the shared marketplace API client (Kotlin equivalent — or just use HttpClient + the same URL constant).
 
@@ -884,7 +884,7 @@ Add 10 new `when` cases in `handleBridgeMessage()` for the message types added i
 - [ ] **Step 5: Build web UI + APK**:
 
 ```bash
-cd destincode && bash scripts/build-web-ui.sh && ./gradlew assembleDebug
+cd youcoded && bash scripts/build-web-ui.sh && ./gradlew assembleDebug
 ```
 
 - [ ] **Step 6: Manual test on Android** — install the debug APK, open Marketplace, sign in, verify a browser opens and the flow completes.
@@ -914,7 +914,7 @@ Add a small indicator in the Marketplace header when the Worker has been unreach
 Manual steps performed by the controller after all tasks land:
 
 - [ ] Build desktop: `cd desktop && npm run build`
-- [ ] Run dev app: `bash scripts/run-dev.sh` from destincode root
+- [ ] Run dev app: `bash scripts/run-dev.sh` from youcoded root
 - [ ] Sign in with GitHub → user chip appears
 - [ ] Open any plugin → install it → `/stats` shows +1 install within 5 min
 - [ ] Rate the same plugin 4 stars with a short review → card shows a star rating
@@ -923,7 +923,7 @@ Manual steps performed by the controller after all tasks land:
 - [ ] Report your own review → report appears in `wrangler d1 execute marketplace --remote --command "SELECT * FROM reports"`
 - [ ] Sign out → user chip disappears; sign-in button returns
 - [ ] Android APK (if Task 13 completed) — same flow
-- [ ] Open a PR to destincode
+- [ ] Open a PR to youcoded
 
 ---
 
@@ -949,4 +949,4 @@ Manual steps performed by the controller after all tasks land:
 
 **2. Inline Execution** — controller executes tasks in-session using superpowers:executing-plans.
 
-**For the next session:** start by running `bash /c/Users/desti/destinclaude-dev/destincode-marketplace/worker/scripts/smoke-test.sh https://destincode-marketplace-api.destinj101.workers.dev` to confirm Plan 1 is still live before committing to Plan 2 work. Then set up the worktree and begin Task 1.
+**For the next session:** start by running `bash /c/Users/desti/youcoded-dev/wecoded-marketplace/worker/scripts/smoke-test.sh https://wecoded-marketplace-api.destinj101.workers.dev` to confirm Plan 1 is still live before committing to Plan 2 work. Then set up the worktree and begin Task 1.

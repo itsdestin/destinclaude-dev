@@ -12,7 +12,7 @@ Re-runs the Phase 0 audit methodology to detect drift between documentation clai
 - `/audit ipc` — audits only cross-platform IPC
 - `/audit chat` — audits only chat reducer
 - `/audit android` — audits only Android runtime
-- `/audit toolkit` — audits only DestinClaude toolkit
+- `/audit toolkit` — audits only YouCoded toolkit
 - `/audit release` — audits only build/release flow
 - `/audit stale` — only checks last_verified dates and commit activity; does not re-verify
 
@@ -67,7 +67,7 @@ Must check:
 
 **Toolkit Audit agent** — verifies claims in:
 - `docs/toolkit-structure.md`
-- `.claude/rules/destinclaude-toolkit.md`
+- `.claude/rules/youcoded-core-toolkit.md`
 - Memory: `arch_three_layer_toolkit.md`, `arch_sync_design.md`, `arch_hook_enforcement.md`
 
 Must check:

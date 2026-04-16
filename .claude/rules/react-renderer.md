@@ -1,6 +1,6 @@
 ---
 paths:
-  - "destincode/desktop/src/renderer/**"
+  - "youcoded/desktop/src/renderer/**"
 last_verified: 2026-04-11
 ---
 

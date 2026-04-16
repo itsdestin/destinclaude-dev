@@ -1,17 +1,17 @@
-# DestinClaude Toolkit Structure
+# YouCoded Toolkit Structure
 
-The toolkit at `destinclaude/` ships as a Claude Code plugin with a root manifest plus three functional layers. Each has its own `plugin.json`.
+The toolkit at `youcoded-core/` ships as a Claude Code plugin with a root manifest plus three functional layers. Each has its own `plugin.json`.
 
 | File | Version | Purpose |
 |------|---------|---------|
-| `destinclaude/plugin.json` | v2.3.2 (root/aggregate) | Root manifest — what users install |
-| `destinclaude/core/plugin.json` | v0.1.0 | Foundation — hooks, setup, sync, themes |
-| `destinclaude/life/plugin.json` | v0.1.0 | Personal knowledge — journal, encyclopedia |
-| `destinclaude/productivity/plugin.json` | v0.1.0 | Task processing, skill creation, messaging |
+| `youcoded-core/plugin.json` | v2.3.2 (root/aggregate) | Root manifest — what users install |
+| `youcoded-core/core/plugin.json` | v0.1.0 | Foundation — hooks, setup, sync, themes |
+| `youcoded-core/life/plugin.json` | v0.1.0 | Personal knowledge — journal, encyclopedia |
+| `youcoded-core/productivity/plugin.json` | v0.1.0 | Task processing, skill creation, messaging |
 
 ## Skills
 
-Skills are directories containing a `SKILL.md` file. YAML frontmatter `description` is how Claude discovers when to invoke them. Skills live under each layer (e.g., `core/skills/sync/SKILL.md`). During setup they are symlinked into `~/.claude/plugins/destinclaude/`.
+Skills are directories containing a `SKILL.md` file. YAML frontmatter `description` is how Claude discovers when to invoke them. Skills live under each layer (e.g., `core/skills/sync/SKILL.md`). During setup they are symlinked into `~/.claude/plugins/youcoded-core/`.
 
 ## Hooks
 

@@ -1,7 +1,7 @@
 ---
 paths:
-  - "destinclaude-themes/**"
-  - "destincode-marketplace/**"
+  - "wecoded-themes/**"
+  - "wecoded-marketplace/**"
 last_verified: 2026-04-11
 ---
 
@@ -9,7 +9,7 @@ last_verified: 2026-04-11
 
 You are editing either the theme registry or the skill marketplace. Read `docs/registries.md` for full context.
 
-## Theme Registry (`destinclaude-themes`)
+## Theme Registry (`wecoded-themes`)
 
 - `registry/theme-registry.json` is **auto-generated** on CI merge. Don't hand-edit it.
 - Each theme lives under `themes/{slug}/` with a `manifest.json` + assets.
@@ -18,14 +18,14 @@ You are editing either the theme registry or the skill marketplace. Read `docs/r
 - `previewTokens` in registry power CSS-based card previews (no image load)
 - CI runs Playwright to generate preview PNGs on merge
 
-## Skill Marketplace (`destincode-marketplace`)
+## Skill Marketplace (`wecoded-marketplace`)
 
 - Registry split into `/skills/` and `/themes/` subdirectories (recent restructure).
-- `index.json` holds combined entries; `marketplace.json` holds DestinCode-only entries
+- `index.json` holds combined entries; `marketplace.json` holds YouCoded-only entries
 - Synced from upstream Anthropic marketplace via `scripts/sync.js` — handles diffing, version tracking, deprecation
-- Entries with `sourceMarketplace: "destinclaude"` are **never overwritten** by upstream sync
+- Entries with `sourceMarketplace: "youcoded-core"` are **never overwritten** by upstream sync
 - CI: `.github/workflows/validate-plugin-pr.yml` validates community plugin PRs
-- App caches the fetched registry for 24 hours at `~/.claude/destincode-marketplace-cache/`
+- App caches the fetched registry for 24 hours at `~/.claude/wecoded-marketplace-cache/`
 
 ## Common gotchas
 

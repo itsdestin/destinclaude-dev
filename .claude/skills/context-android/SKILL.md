@@ -1,11 +1,11 @@
 ---
 name: context-android
-description: Load deep context for Android app development — Kotlin SessionService, Bootstrap runtime, WebViewHost, LocalBridgeServer, Termux environment, SELinux bypass. Invoke before making non-trivial changes to destincode/app/ code, especially runtime, IPC, or native UI features.
+description: Load deep context for Android app development — Kotlin SessionService, Bootstrap runtime, WebViewHost, LocalBridgeServer, Termux environment, SELinux bypass. Invoke before making non-trivial changes to youcoded/app/ code, especially runtime, IPC, or native UI features.
 ---
 
 # Android Development Context
 
-You are working on the DestinCode Android app. Before making changes, orient with these references:
+You are working on the YouCoded Android app. Before making changes, orient with these references:
 
 ## Read first
 - `docs/android-runtime.md` — full runtime architecture, key files table, SELinux bypass details
@@ -40,7 +40,7 @@ For IPC handlers that need native Android UI (file picker, folder picker, QR sca
 
 ## Testing
 
-`cd destincode && ./gradlew test` for unit tests. `./gradlew assembleDebug` for APK. Remember to run `./scripts/build-web-ui.sh` first or the APK launches with a blank WebView.
+`cd youcoded && ./gradlew test` for unit tests. `./gradlew assembleDebug` for APK. Remember to run `./scripts/build-web-ui.sh` first or the APK launches with a blank WebView.
 
 ## Key files
 See `docs/android-runtime.md` table for full reference. Most critical: `Bootstrap.kt`, `SessionService.kt`, `PtyBridge.kt`, `LocalBridgeServer.kt`, `assets/claude-wrapper.js`.

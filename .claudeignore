@@ -1,14 +1,14 @@
 # Build artifacts and dependencies
-destincode/desktop/node_modules/
-destincode/desktop/dist/
-destincode/desktop/release/
-destincode/app/build/
-destincode/.gradle/
+youcoded/desktop/node_modules/
+youcoded/desktop/dist/
+youcoded/desktop/release/
+youcoded/app/build/
+youcoded/.gradle/
 **/node_modules/
 **/*.map
 
 # Large historical/plan documents — not needed for active sessions
-destinclaude/CHANGELOG.md
+youcoded-core/CHANGELOG.md
 TOOLKIT-DECOMPOSITION-*.md
 TOOLKIT-MARKETPLACE-DECOMPOSITION-PLAN.md
 SECURITY-REMEDIATION-*.md

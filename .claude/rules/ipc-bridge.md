@@ -1,11 +1,11 @@
 ---
 paths:
-  - "destincode/desktop/src/main/preload.ts"
-  - "destincode/desktop/src/main/ipc-handlers.ts"
-  - "destincode/desktop/src/renderer/remote-shim.ts"
-  - "destincode/app/**/SessionService.kt"
-  - "destincode/app/**/LocalBridgeServer.kt"
-  - "destincode/app/**/PlatformBridge.kt"
+  - "youcoded/desktop/src/main/preload.ts"
+  - "youcoded/desktop/src/main/ipc-handlers.ts"
+  - "youcoded/desktop/src/renderer/remote-shim.ts"
+  - "youcoded/app/**/SessionService.kt"
+  - "youcoded/app/**/LocalBridgeServer.kt"
+  - "youcoded/app/**/PlatformBridge.kt"
 last_verified: 2026-04-11
 ---
 

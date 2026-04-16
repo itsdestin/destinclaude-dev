@@ -1,15 +1,15 @@
 ---
 name: context-toolkit
-description: Load deep context for DestinClaude toolkit development — plugin structure, hooks, skills, sync system, encyclopedia, specs. Invoke before making non-trivial changes to destinclaude/ code, especially hooks, skills, or sync/config logic.
+description: Load deep context for YouCoded toolkit development — plugin structure, hooks, skills, sync system, encyclopedia, specs. Invoke before making non-trivial changes to youcoded-core/ code, especially hooks, skills, or sync/config logic.
 ---
 
 # Toolkit Development Context
 
-You are working on the DestinClaude toolkit. Before making changes, orient with these references:
+You are working on the YouCoded toolkit. Before making changes, orient with these references:
 
 ## Read first
 - `docs/toolkit-structure.md` — three-layer plugin architecture
-- `destinclaude/docs/system-architecture.md` — comprehensive architecture reference
+- `youcoded-core/docs/system-architecture.md` — comprehensive architecture reference
 - `arch_three_layer_toolkit.md` memory — why the layer split exists
 - `arch_hook_enforcement.md` memory — why hooks-manifest.json is the source of truth
 - `arch_sync_design.md` memory — config.json vs config.local.json, sync backends
@@ -41,4 +41,4 @@ You are working on the DestinClaude toolkit. Before making changes, orient with 
 
 ## Known state
 
-`~/.claude/settings.json` currently runs DestinCode app hooks (relay.js), not toolkit hooks directly. The manifest reconciliation may need `/update` to activate. See `arch_hook_enforcement.md` for details.
+`~/.claude/settings.json` currently runs YouCoded app hooks (relay.js), not toolkit hooks directly. The manifest reconciliation may need `/update` to activate. See `arch_hook_enforcement.md` for details.

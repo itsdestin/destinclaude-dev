@@ -9,7 +9,7 @@ Claude Code reads hook configuration from `~/.claude/settings.json`. The toolkit
 
 ## Decision
 
-Declare toolkit hooks in `destinclaude/core/hooks/hooks-manifest.json` in a **desired-state format**. During `/update`, `phase_settings_migrate()` performs an additive reconciliation into settings.json:
+Declare toolkit hooks in `youcoded-core/core/hooks/hooks-manifest.json` in a **desired-state format**. During `/update`, `phase_settings_migrate()` performs an additive reconciliation into settings.json:
 
 - New hooks from manifest → added to settings.json
 - Missing properties (matcher, timeout) → added
@@ -32,5 +32,5 @@ Declare toolkit hooks in `destinclaude/core/hooks/hooks-manifest.json` in a **de
 
 **Bad:**
 - Reconciliation logic lives in `session-start.sh` and `post-update.sh` — complex and somewhat fragile
-- Current observed drift: `~/.claude/settings.json` shows DestinCode app hooks (relay.js) rather than toolkit hooks. Reconciliation may need a bug fix or the user may never have run `/update` with the current manifest.
+- Current observed drift: `~/.claude/settings.json` shows YouCoded app hooks (relay.js) rather than toolkit hooks. Reconciliation may need a bug fix or the user may never have run `/update` with the current manifest.
 - Users who want to temporarily disable a toolkit hook can't — editing settings.json directly gets overwritten on next `/update`

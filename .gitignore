@@ -1,9 +1,9 @@
 # Cloned repos (managed by setup.sh)
-destincode/
-destinclaude/
-destinclaude-admin/
-destinclaude-themes/
-destincode-marketplace/
+youcoded/
+youcoded-core/
+youcoded-admin/
+wecoded-themes/
+wecoded-marketplace/
 
 # Worktrees and temp directories
 *-worktree*/

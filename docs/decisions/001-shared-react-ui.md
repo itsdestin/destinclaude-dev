@@ -5,11 +5,11 @@
 
 ## Context
 
-DestinCode targets both desktop (Windows/Mac/Linux via Electron) and Android. The creator is a non-developer; maintaining two UI codebases through conversation with Claude would be prohibitively complex.
+YouCoded targets both desktop (Windows/Mac/Linux via Electron) and Android. The creator is a non-developer; maintaining two UI codebases through conversation with Claude would be prohibitively complex.
 
 ## Decision
 
-Use a single React app (`destincode/desktop/src/renderer/`) as the source of truth for the main UI on both platforms:
+Use a single React app (`youcoded/desktop/src/renderer/`) as the source of truth for the main UI on both platforms:
 - Desktop: Electron hosts the React app natively
 - Android: WebView loads the React build from bundled assets (`file:///android_asset/web/`)
 - IPC between the UI and native code uses the same JSON protocol on both platforms — only transport differs (Electron IPC vs WebSocket to LocalBridgeServer on `ws://localhost:9901`)

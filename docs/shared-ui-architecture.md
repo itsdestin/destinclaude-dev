@@ -1,10 +1,10 @@
 # Shared UI Architecture
 
-Desktop and Android render the **same React UI**. This is the most important architectural fact about DestinCode.
+Desktop and Android render the **same React UI**. This is the most important architectural fact about YouCoded.
 
 ## How it works
 
-- Source of truth: `destincode/desktop/src/renderer/` (React app)
+- Source of truth: `youcoded/desktop/src/renderer/` (React app)
 - Desktop: Electron hosts the React app natively
 - Android: `WebViewHost.kt` loads the React build from bundled assets (`file:///android_asset/web/`). The React bundle is generated from the desktop source via `scripts/build-web-ui.sh`.
 - Platform detection: `remote-shim.ts` checks `location.protocol === 'file:'` (Android) and routes IPC via WebSocket (`ws://localhost:9901`). Desktop uses Electron IPC directly.
@@ -16,9 +16,9 @@ Most features work on both platforms automatically because the UI is shared. Onl
 
 ## Adding Cross-Platform Features (IPC Pattern)
 
-1. **React side** (`destincode/desktop/src/renderer/remote-shim.ts`): Add method to `window.claude` using `invoke('type:name', payload)` (request-response) or `fire('type:name', payload)` (fire-and-forget)
-2. **Desktop side** (`destincode/desktop/src/main/ipc-handlers.ts`): Add `ipcMain.handle(IPC.CHANNEL, handler)` for request-response, or `ipcMain.on()` for fire-and-forget
-3. **Android side** (`destincode/app/.../runtime/SessionService.kt`): Add a `when` case in `handleBridgeMessage()` matching the same type string. Respond with `bridgeServer.respond(ws, msg.type, msg.id, payload)` if `msg.id` is present
+1. **React side** (`youcoded/desktop/src/renderer/remote-shim.ts`): Add method to `window.claude` using `invoke('type:name', payload)` (request-response) or `fire('type:name', payload)` (fire-and-forget)
+2. **Desktop side** (`youcoded/desktop/src/main/ipc-handlers.ts`): Add `ipcMain.handle(IPC.CHANNEL, handler)` for request-response, or `ipcMain.on()` for fire-and-forget
+3. **Android side** (`youcoded/app/.../runtime/SessionService.kt`): Add a `when` case in `handleBridgeMessage()` matching the same type string. Respond with `bridgeServer.respond(ws, msg.type, msg.id, payload)` if `msg.id` is present
 
 The message type string (e.g., `"skills:install"`) must be **identical across all three files**. `SessionService.handleBridgeMessage()` currently has 92 message types.
 
@@ -44,7 +44,7 @@ Desktop handlers return raw values (e.g., `string[]`). Android wraps in JSONObje
 
 ## Overlay Layer System
 
-All popups, modals, drawers, and floating menus share a single set of theme-driven overlay tokens. This is how DestinCode keeps popup styling consistent across themes and avoids per-component hardcoded scrims/shadows/blur.
+All popups, modals, drawers, and floating menus share a single set of theme-driven overlay tokens. This is how YouCoded keeps popup styling consistent across themes and avoids per-component hardcoded scrims/shadows/blur.
 
 ### Layers
 

@@ -5,7 +5,7 @@
 
 ## Context
 
-DestinClaude ships a large surface area of features: hooks, setup, sync, themes, journaling, encyclopedia, task inbox, skill creation, messaging. Putting all of these in a single flat plugin would make updates, debugging, and user comprehension difficult.
+YouCoded ships a large surface area of features: hooks, setup, sync, themes, journaling, encyclopedia, task inbox, skill creation, messaging. Putting all of these in a single flat plugin would make updates, debugging, and user comprehension difficult.
 
 ## Decision
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SessionStart hook: inject dynamic project state into Claude's context.
 #
-# For multi-repo workspaces (destinclaude-dev), shows recent commits, current
+# For multi-repo workspaces (youcoded-dev), shows recent commits, current
 # branches, uncommitted changes, and active worktrees per sub-repo.
 # For single-repo projects, shows the same for the current repo.
 #
@@ -43,7 +43,7 @@ collect_repo_state() {
 
 # Detect multi-repo workspace by checking for known sub-repos
 SUB_REPOS=()
-for candidate in destincode destinclaude destinclaude-admin destinclaude-themes destincode-marketplace; do
+for candidate in youcoded youcoded-core youcoded-admin wecoded-themes wecoded-marketplace; do
     if [[ -d "$WORKSPACE/$candidate/.git" ]]; then
         SUB_REPOS+=("$candidate")
     fi

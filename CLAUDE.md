@@ -6,37 +6,37 @@ Workspace guidance for Claude Code. Subsystem details live in `docs/` and `.clau
 
 **On first session**, run `bash setup.sh` from the project root to clone all repos. On subsequent sessions, run it again to pull the latest from each repo's default branch. Do this before any other work.
 
-**All pushes and PRs go to the relevant sub-repo** (e.g., `destincode/`, `destinclaude/`), never to the `destinclaude-dev` repo itself. This repo is only the workspace scaffold.
+**All pushes and PRs go to the relevant sub-repo** (e.g., `youcoded/`, `youcoded-core/`), never to the `youcoded-dev` repo itself. This repo is only the workspace scaffold.
 
 ## About This Project
 
-DestinCode is an open-source cross-platform AI assistant app built entirely without coding experience using Claude Code. The creator (Destin) is a non-developer — the entire ecosystem is built and maintained through conversation with Claude.
+YouCoded is an open-source cross-platform AI assistant app built entirely without coding experience using Claude Code. The creator (Destin) is a non-developer — the entire ecosystem is built and maintained through conversation with Claude.
 
-**What DestinCode is:** A hyper-personalized AI assistant app for students, professionals, and anyone who uses AI regularly. Users sign in with their Claude Pro or Max plan (no API key needed). It runs on Windows, macOS, Linux, Android, and via remote web access.
+**What YouCoded is:** A hyper-personalized AI assistant app for students, professionals, and anyone who uses AI regularly. Users sign in with their Claude Pro or Max plan (no API key needed). It runs on Windows, macOS, Linux, Android, and via remote web access.
 
 **Core pillars:**
 - **Social AI** — share custom themes and skills with friends/classmates/coworkers, play multiplayer games while waiting for Claude to work
-- **Personalization** — the DestinClaude toolkit adds journaling, a personal encyclopedia, task inbox, text messaging, and cross-device sync
+- **Personalization** — the YouCoded toolkit adds journaling, a personal encyclopedia, task inbox, text messaging, and cross-device sync
 - **Accessibility** — designed for non-technical users, not just developers. You can build things within this app using just conversation
 
-**DestinCode is the product. DestinClaude is the toolkit that supplements it.** Documentation and code should always reflect this hierarchy.
+**YouCoded is the product. YouCoded is the toolkit that supplements it.** Documentation and code should always reflect this hierarchy.
 
 ## Workspace Layout
 
 | Directory | Repo | What it is |
 |-----------|------|------------|
-| `destincode/` | itsdestin/destincode | **The app** — Desktop (Electron) + Android (Kotlin), skill marketplace, themes, multiplayer games |
-| `destinclaude/` | itsdestin/destinclaude | **The toolkit** — Claude Code plugin with skills, hooks, commands for personalization |
-| `destinclaude-admin/` | itsdestin/destinclaude-admin | Owner-only release and announcement skills |
-| `destinclaude-themes/` | itsdestin/destinclaude-themes | Community theme registry |
-| `destincode-marketplace/` | itsdestin/destincode-marketplace | Skill marketplace registry |
+| `youcoded/` | itsdestin/youcoded | **The app** — Desktop (Electron) + Android (Kotlin), skill marketplace, themes, multiplayer games |
+| `youcoded-core/` | itsdestin/youcoded-core | **The toolkit** — Claude Code plugin with skills, hooks, commands for personalization |
+| `youcoded-admin/` | itsdestin/youcoded-admin | Owner-only release and announcement skills |
+| `wecoded-themes/` | itsdestin/wecoded-themes | Community theme registry |
+| `wecoded-marketplace/` | itsdestin/wecoded-marketplace | Skill marketplace registry |
 
 ## Cross-Repo Relationships
 
-- **destincode** is the main product. It contains `desktop/` (Electron app) and `app/` (Android app) side by side.
-- **destinclaude** is the plugin toolkit installed at `~/.claude/plugins/destinclaude/`. The app discovers its skills via the filesystem.
-- **destinclaude-themes** and **destincode-marketplace** registries are fetched at runtime by both apps from raw GitHub URLs.
-- **destinclaude-admin** release skill orchestrates coordinated releases across both repos.
+- **youcoded** is the main product. It contains `desktop/` (Electron app) and `app/` (Android app) side by side.
+- **youcoded-core** is the plugin toolkit installed at `~/.claude/plugins/youcoded-core/`. The app discovers its skills via the filesystem.
+- **wecoded-themes** and **wecoded-marketplace** registries are fetched at runtime by both apps from raw GitHub URLs.
+- **youcoded-admin** release skill orchestrates coordinated releases across both repos.
 
 ## Working Rules
 
@@ -68,16 +68,16 @@ Release builds happen through GitHub Actions CI in the relevant sub-repo. For it
 bash scripts/run-dev.sh
 ```
 
-This shifts every port destincode uses (Vite 5173 → 5223, remote server 9900 → 9950) and splits Electron `userData` into a separate dir so the dev instance coexists with a running built app. See `docs/local-dev.md` for what's isolated, what's shared (`~/.claude/`), and the caveats.
+This shifts every port youcoded uses (Vite 5173 → 5223, remote server 9900 → 9950) and splits Electron `userData` into a separate dir so the dev instance coexists with a running built app. See `docs/local-dev.md` for what's isolated, what's shared (`~/.claude/`), and the caveats.
 
 For Claude sessions that need to verify code compiles or run tests locally:
 
 ```bash
 # Desktop
-cd destincode/desktop && npm ci && npm test && npm run build
+cd youcoded/desktop && npm ci && npm test && npm run build
 
 # Android (requires Desktop React UI built first)
-cd destincode && ./scripts/build-web-ui.sh && ./gradlew assembleDebug && ./gradlew test
+cd youcoded && ./scripts/build-web-ui.sh && ./gradlew assembleDebug && ./gradlew test
 ```
 
 See `docs/build-and-release.md` for full build order, release flows, and version bumping rules.

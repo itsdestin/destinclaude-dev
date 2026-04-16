@@ -1,8 +1,8 @@
 ---
 paths:
-  - "destincode/desktop/src/renderer/state/chat-reducer.ts"
-  - "destincode/desktop/src/renderer/state/chat-types.ts"
-  - "destincode/desktop/src/renderer/components/ChatView.tsx"
+  - "youcoded/desktop/src/renderer/state/chat-reducer.ts"
+  - "youcoded/desktop/src/renderer/state/chat-types.ts"
+  - "youcoded/desktop/src/renderer/components/ChatView.tsx"
 last_verified: 2026-04-12
 ---
 
