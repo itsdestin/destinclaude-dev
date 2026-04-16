@@ -1,9 +1,10 @@
 # Google Services Bundle — Design
 
-**Status:** Draft, awaiting user review.
+**Status:** Approved; revised 2026-04-16 post-research. Ready to implement.
 **Created:** 2026-04-16
 **Owner:** Destin
 **Supersedes in scope:** part of `docs/plans/marketplace-integrations-v2.md` (the monolithic cross-bundle plan). The Google portion of that plan is replaced by this document. Other bundles (Apple Services, iMessage, macOS Control, etc.) will each get their own spec.
+**Research findings:** [docs/superpowers/plans/research/2026-04-16-refresh-token-findings.md](../plans/research/2026-04-16-refresh-token-findings.md), [oauth-brand-automation.md](../plans/research/2026-04-16-oauth-brand-automation.md), [gws-slides-coverage.md](../plans/research/2026-04-16-gws-slides-coverage.md). Summary under "Research outcomes" below.
 
 ---
 
@@ -30,11 +31,15 @@ This is the first of nine per-bundle specs in the marketplace-integrations works
 
 ## OAuth strategy
 
-**User-brings-own GCP project, automated end-to-end via `gcloud` during `/google-services-setup`.** No YouCoded-owned verified app in v1.
+**User-brings-own GCP project with auto-reauth.** Each user creates their own throwaway Google Cloud project during `/google-services-setup`; `gcloud` automates what it can, screenshot-guided Cloud Console steps handle what it can't (see Step 3 below). `gws` manages the OAuth flow against the user's personal credentials. No YouCoded-owned verified app in v1.
 
-Rationale: verification takes ~4–6 weeks with Google, requires a branded public homepage + privacy policy + demo video, and would make Destin the sole owner of an app every user depends on. User-brings-own sidesteps all of that at the cost of setup friction, which we mitigate by scripting every step of the GCP bootstrap via `gcloud`.
+Rationale: verification takes ~4–6 weeks with Google, requires a branded public homepage + privacy policy + demo video, and would make Destin the sole owner of an app every user depends on. v1 ships without it; v2 is parked as an enhancement (see "Out of scope").
 
-⚠ **Research-gated:** the 7-day refresh-token expiry for unverified-app sensitive scopes (see Open Research Items) could invalidate this choice. Spec commits to the branch contingent on research resolution.
+**Known limitation — 7-day refresh-token expiry (Research Item 1, RED).** Google enforces a 7-day refresh-token lifetime for External-type apps in Testing publish status that request sensitive scopes (all six of ours qualify). Workaround research found none documented. Users therefore see an OAuth consent screen roughly once per week.
+
+**Mitigation — auto-reauth driven by the wrapper, not the user.** The user never runs a "reauth" command. When any skill's `gws_run` call returns an auth-expired error, the wrapper exits with a structured AUTH_EXPIRED signal. The skill surfaces this to Claude, which tells the user conversationally (*"Your Google connection needs a quick refresh — I'll open a browser"*), runs the reauth helper, waits for the browser consent, and retries the original call. User friction per 7 days: one browser tab, click "Allow," back to work. No slash commands to remember. Full behavior speced under "Auto-reauth flow" below.
+
+**v2 enhancement (parked):** YouCoded-owned verified Google Cloud app. Verification eliminates the 7-day cycle entirely; users would do one OAuth grant at install and never see another consent screen. Cost is ~4–6 weeks of Google review plus a public homepage + privacy policy + demo video, plus ongoing ownership. Worth doing once v1 proves the bundle has users.
 
 ## User-facing language policy
 
@@ -63,10 +68,13 @@ wecoded-marketplace/google-services/
   setup/
     install-gws.sh                     # detect + install gws (brew / cargo / prebuilt)
     install-gcloud.sh                  # detect + install gcloud (brew / winget / apt)
-    bootstrap-gcp.sh                   # gcloud-driven project + API enable + OAuth client
+    bootstrap-gcp.sh                   # gcloud-driven project + API enable (scripted)
+    consent-walkthrough.sh             # guided Cloud Console walkthrough + creds paste-back (manual)
     smoke-test.sh                      # read-only probe per service, at end of setup
+    reauth.sh                          # 7-day auto-reauth helper — invoked by wrapper, not user
+    migrate-legacy.sh                  # user-machine cleanup for retired artifacts
   lib/
-    gws-wrapper.sh                     # shared helpers: auth-status, auth-error-handler
+    gws-wrapper.sh                     # gws_run function: forwards calls, exits 2 on AUTH_EXPIRED
   docs/
     DEV-VERIFICATION.md                # one-time round-trip checklist (dev, not shipped)
 ```
@@ -140,9 +148,13 @@ Press Enter to open your browser...
 
 Runs `gcloud auth login`. Waits for completion.
 
-### Step 3 — Setting it up
+### Step 3 — Setting it up (hybrid: scripted + ~3 minutes of guided clicks)
 
-All provisioning happens as one progress block with plain-language labels:
+Per Research Item 2, `gcloud` can create the project and enable APIs, but **Google's OAuth consent-screen and client-ID configuration must be done in Cloud Console** for External-audience apps. The IAP OAuth Admin API that used to handle this programmatically was shut down on 2026-03-19. There is no current `gcloud` path that replaces it.
+
+Step 3 is therefore split into four sub-steps. The user sees the whole thing as a single flow with progress lines; internally it's scripted → guided → paste → scripted.
+
+**Step 3A — Scripted scaffolding (no user input).**
 
 ```
 Setting up...
@@ -155,6 +167,49 @@ Setting up...
   ✓ Unlocked Slides
   ✓ Unlocked Calendar
 ```
+
+**Step 3B — Consent screen walkthrough.** Setup command opens Cloud Console's OAuth Consent Screen page to the right project via `gcloud` deep-link, then prints:
+
+```
+One quick thing I can't do for you automatically.
+
+Google needs you to set up the permissions screen yourself. I've
+opened the page in your browser — follow along:
+
+  1. Click "Get Started"
+  2. Choose audience: "External"   (important — not "Internal")
+  3. App name: "YouCoded Personal"
+  4. Support email: your own email
+  5. Click Save and Continue through the next screens
+  6. On the "Test users" screen, add your own email as a test user
+  7. Click Back to Dashboard
+
+Press Enter when you're done...
+```
+
+Screenshot of each numbered step shown in a side panel or inline-ASCII diagram.
+
+**Step 3C — OAuth client ID paste-back.** Setup command opens Cloud Console's Credentials page, prints:
+
+```
+One more page. Still the same browser tab.
+
+  1. Click "Create Credentials" → "OAuth client ID"
+  2. Application type: "Desktop app"
+  3. Name: "YouCoded Personal"
+  4. Click Create
+  5. Copy the Client ID and Client Secret from the box that appears
+  6. Paste them below when prompted
+
+Client ID: <prompt>
+Client Secret: <prompt>
+```
+
+Setup writes the pasted credentials to `$HOME/.youcoded/google-services/oauth-credentials.json`.
+
+**Step 3D — Automated OAuth flow.** `gws auth setup` is invoked with the pasted credentials. Browser #2 opens for the permission grant (proceeds to Step 4 below).
+
+**Why this UX is acceptable.** The console steps are ~3 minutes, only happen once (not every 7 days — the reauth flow reuses these credentials), and every step has a screenshot. Users who never touch Cloud Console can still complete it because the instructions are literal click-by-click.
 
 ### Step 4 — Unverified-app warning explained in advance
 
@@ -265,11 +320,11 @@ Each of the six services gets the same shape: scope, `gws` surface, what the SKI
 ### Google Slides
 
 - **Scope:** `presentations`.
-- **`gws` surface:** `gws slides get`; write-op support depends on Research Item 3's outcome (spec reverts to read-only Slides for v1 if `gws` lacks writes).
-- **Skill description covers:** reading slide deck content, creating a new deck, exporting to PDF.
-- **Dev-time round-trip:** create deck → add slide with "hello" → export to PDF → confirm non-empty → trash.
-- **Shipped probe:** `gws slides get` on a recent deck ID from `gws drive list --mime-type slides --max 1`.
-- **Gotchas:** `gws`'s Slides surface is historically thinner than Docs/Sheets. If write ops aren't supported, ship Slides as **read-only in v1**, document the gap, file a follow-up issue to add writes when `gws` gains them.
+- **`gws` surface:** `gws slides presentations create / get / batchUpdate` (full read + write). Export and deck-listing hop to `gws drive files export` and `gws drive files list --q "mimeType='application/vnd.google-apps.presentation'"` respectively — per Research Item 3, Slides does not own those surfaces on the Google side either.
+- **Skill description covers:** reading slide deck content, creating a new deck, adding or editing slides, exporting to PDF.
+- **Dev-time round-trip:** create deck → `batchUpdate` to add slide + insert text → `get` and confirm slide count ≥ 2 + text present → export to PDF via drive → `gws drive trash`.
+- **Shipped probe:** `gws drive files list --max 1 --q "mimeType='application/vnd.google-apps.presentation'"` then `gws slides presentations get <id>`.
+- **Gotchas:** (a) `batchUpdate` is verbose — Claude tends to chain many requests one-at-a-time when it should batch. Skill includes 2–3 batch recipes as examples. (b) Cross-service hops: the skill declares `google-drive` as a soft dependency for export and list.
 
 ### Google Calendar
 
@@ -283,8 +338,49 @@ Each of the six services gets the same shape: scope, `gws` surface, what the SKI
 ### Shared concerns across all six
 
 - All skills source auth status from `gws auth status`. None keep their own state.
-- `lib/gws-wrapper.sh` provides one shared auth-error helper: if `gws` returns an auth error, user sees *"Your Google Services connection needs refreshing — run `/google-services-setup` to reconnect."* Never six variants.
+- `lib/gws-wrapper.sh` exposes one function, `gws_run`, that every skill calls instead of invoking `gws` directly. It forwards the command, inspects output for auth-expiry signatures, and exits with code **2** and a stable `AUTH_EXPIRED:<service>` line on the auth path. Skills never duplicate this logic.
+- Every SKILL.md includes a uniform **"## Handling auth expiry"** section with the exact phrasing Claude uses to recover from an exit-2 signal. See "Auto-reauth flow" below for the contract.
 - Skill descriptions are calibrated during implementation so Claude picks exactly ONE skill per prompt — no split-brain routing. Tested with prompts like *"send an email with last week's budget sheet attached"* (should route to Gmail primary, Sheets as secondary tool inside Gmail, not a tie).
+
+---
+
+## Auto-reauth flow
+
+Because the user's OAuth refresh token expires every 7 days (see OAuth strategy), every skill must gracefully recover from `invalid_grant` mid-conversation. The user never runs a reauth command; Claude drives the recovery.
+
+### The contract
+
+1. **Skill calls `gws_run <service> <args...>`.** The wrapper forwards to `gws`, catches auth errors, and returns exit **0** on success or exit **2** on auth expiry. Any other error keeps its original exit code.
+2. **On exit 2**, the wrapper has already written a single line to stderr: `AUTH_EXPIRED:<service>` (e.g., `AUTH_EXPIRED:gmail`). This is a stable marker the skill parses; it is NOT user-facing text.
+3. **Skill catches exit 2**, stops its current operation, and prints a brief marker Claude can read: e.g., `[reauth-required: gmail]`.
+4. **Claude, seeing the marker**, tells the user in natural language: *"Your Google connection needs a quick refresh — I'm opening a browser. Approve the permissions and I'll finish {original task}."*
+5. **Claude runs `bash $CLAUDE_PLUGIN_ROOT/setup/reauth.sh`.** This helper:
+   - Reads `$HOME/.youcoded/google-services/oauth-credentials.json` (stored during initial setup)
+   - Invokes `gws auth setup` with those credentials — opens the OS's default browser to Google's OAuth consent page
+   - Blocks until the OAuth flow completes (success or user cancels)
+   - Exits 0 on success, 1 on failure
+6. **On reauth success**, Claude retries the original `gws_run` call with the same arguments. If it succeeds, Claude proceeds as if nothing happened and completes the user's request.
+7. **On reauth failure** (user closed the browser, refresh timed out), Claude tells the user plainly: *"I couldn't refresh the Google connection. Want me to try again, or come back to this later?"*
+
+### What the user sees per 7 days
+
+- Asks Claude something Google-related
+- Brief message from Claude: *"Quick refresh — approve in your browser."*
+- Familiar OAuth consent page opens (same one from first-time setup)
+- Clicks "Allow"
+- Browser closes; Claude completes the original request
+- Total friction: ~10 seconds of clicking
+
+### What this flow does NOT re-do
+
+- **It does NOT re-run `bootstrap-gcp.sh`.** The GCP project, APIs, and OAuth client already exist from initial setup. `reauth.sh` reuses the stored `oauth-credentials.json`.
+- **It does NOT show the unverified-app warning.** That warning is shown on first consent, not on subsequent consent grants to the same client ID. User goes straight to the scope-grant page.
+- **It does NOT re-run smoke tests.** Once the reauth succeeds, the original skill retries its own operation. That retry is the proof it worked.
+
+### Implementer notes (not in shipped behavior)
+
+- `gws auth setup` must be callable non-interactively with pre-supplied credentials. Confirm at implementation time. If it insists on prompting, the reauth helper shells out to a different entry point (likely `gws auth refresh --force` or manual `gws auth token` + browser open).
+- The AUTH_EXPIRED signature in `gws`'s error output is version-sensitive. Pin the wrapper's regex to the pinned `gws` version and re-verify on every version bump.
 
 ---
 
@@ -324,31 +420,33 @@ Edge cases documented but not expanded here (handled at implementation): network
 
 ---
 
-## Open research items
+## Research outcomes (resolved 2026-04-16)
 
-Answer before implementation begins. Each has a fallback if the answer is unfavorable.
+Three items were surfaced during brainstorming and researched via documentation before this spec was finalized. Empirical observation (e.g., the 10-day refresh-token watch) was deliberately skipped; findings are based on Google's current policy docs, official `gcloud` reference, community forums, and `gws` source. Full reports live at `docs/superpowers/plans/research/`.
 
-### 1. 7-day refresh-token expiry for unverified-app sensitive scopes
+### 1. 7-day refresh-token expiry — 🔴 RED
 
-- **Question:** In 2026, does Google still expire refresh tokens after 7 days for External-type OAuth apps in "Testing" publish status when requesting sensitive scopes (`gmail.modify`, `drive`, `calendar`)?
-- **How to resolve:** Read Google's current OAuth policy docs. Provision a test project and observe token behavior over 10 days.
-- **Fallback if unavoidable:**
-  - (a) Narrow scope list to non-sensitive only — loses Gmail send, Drive write, Calendar modify. Heavy feature loss; almost certainly unacceptable.
-  - (b) Pivot to YouCoded-owned verified app — spec reverts to Path 2 of the earlier OAuth fork; Destin owns verification.
-  - (c) Accept weekly re-auth; make `/google-services-setup --reauth` a one-touch flow.
-- **Decision belongs to Destin at research-resolution time, not now.**
+Google's current OAuth docs (last updated 2026-04-03) still enforce the 7-day refresh-token lifetime for External + Testing-status apps that request sensitive scopes. Every scope we need (`gmail.modify`, `drive`, `calendar`, `documents`, `spreadsheets`, `presentations`) qualifies. No documented workaround exists. Community lore about "publish to Production unverified" is unverified and contradicted by the policy language that ties the 7-day limit to unverified *state*, not the Testing *label*.
 
-### 2. "External" OAuth consent screen automation via `gcloud`
+**Decision taken:** Accept the 7-day expiry as a known limitation. Mitigate via the auto-reauth flow (see "Auto-reauth flow" section) so the user never has to run a reauth command — Claude drives it in-conversation. v2 YouCoded-owned verified app is parked as a future enhancement.
 
-- **Question:** In 2026, can `gcloud alpha iap oauth-brands create` + `oauth-clients create` configure an External-type consent screen end-to-end, or does it still require cloud-console clicks?
-- **How to resolve:** Run end-to-end in a throwaway GCP project. Observe what's left manual.
-- **Fallback:** Add a ~60-second screenshot-guided walkthrough for the remaining clicks. Small UX cost; no design-level change.
+**Source:** `docs/superpowers/plans/research/2026-04-16-refresh-token-findings.md`.
 
-### 3. `gws` Slides write coverage
+### 2. `gcloud` External-consent automation — 🟡 YELLOW
 
-- **Question:** Does `gws slides` support write operations (create slides, add content) in 2026, or read-only?
-- **How to resolve:** `gws slides --help` on the pinned version; upstream release notes.
-- **Fallback:** Ship Slides read-only in v1, document the gap, follow-up issue.
+`gcloud alpha iap oauth-brands create` only produces Internal-type brands in 2026. The IAP OAuth Admin API that handled programmatic External-brand provisioning was deprecated 2025-01-22 and fully shut down 2026-03-19 (three weeks before this spec). Google is moving *away* from programmatic OAuth client management, not toward it. ~3–5 minutes of manual Cloud Console work per user is unavoidable.
+
+**Decision taken:** Accept the manual steps. Split `/google-services-setup` Step 3 into the four-phase hybrid flow (scripted scaffold → guided console walkthrough → paste credentials → automated OAuth). Screenshot-backed click-by-click instructions at each manual step.
+
+**Source:** `docs/superpowers/plans/research/2026-04-16-oauth-brand-automation.md`.
+
+### 3. `gws` Slides write coverage — 🟢 GREEN
+
+`gws` builds its command tree dynamically from Google's Discovery Service at runtime; `gws slides` at v0.22.5 exposes `presentations.create`, `presentations.get`, `presentations.batchUpdate`, and the `pages` sub-resource. `batchUpdate` is Google's universal mutation entrypoint — all write operations (add/remove slides, insert text, replace content, change layouts, images, tables) route through it. Two apparent gaps are actually Drive-side: PDF export lives on `gws drive files export`, and deck listing on `gws drive files list`.
+
+**Decision taken:** Ship Slides with full read + write + export, documenting in the Slides skill that export and listing hop to the drive surface.
+
+**Source:** `docs/superpowers/plans/research/2026-04-16-gws-slides-coverage.md`.
 
 ---
 
@@ -363,11 +461,11 @@ Before declaring this plugin ready to ship, we run this checklist on a clean tes
 - [ ] Drive round-trip: upload → list → download → trash.
 - [ ] Docs round-trip: create → read → trash.
 - [ ] Sheets round-trip: create → write A1 → read A1 → trash.
-- [ ] Slides round-trip (or read-only if research item 3 rules out writes).
+- [ ] Slides round-trip: create deck → batchUpdate to add slide + text → get → `gws drive files export` to PDF → `gws drive trash`.
 - [ ] Calendar round-trip: create event → list → delete.
 - [ ] Migration: test machine with pre-installed `youcoded-drive` + `claudes-inbox` on hosted Gmail — setup cleans all artifacts.
 - [ ] Skill discovery: compound prompts ("send an email with last week's budget sheet attached") route cleanly to one primary skill.
-- [ ] Refresh-token behavior observed over 10 days to validate research item 1's answer.
+- [ ] Auto-reauth: force an `invalid_grant` (e.g., revoke a token in Google account settings), invoke any skill, verify Claude recovers end-to-end via `reauth.sh` and retries successfully.
 
 ---
 
@@ -376,8 +474,7 @@ Before declaring this plugin ready to ship, we run this checklist on a clean tes
 - Google Contacts — v1.1 candidate.
 - Google Messages — separate bundle spec.
 - Google Chat — not advertised; skip indefinitely.
-- Verified-app path / YouCoded-owned GCP app — could become necessary based on research item 1; not baseline v1.
-- Slides write ops — if research item 3 finds `gws` lacks them.
+- **YouCoded-owned verified Google Cloud app (v2 enhancement).** Would eliminate the 7-day reauth cycle by migrating every user from their own BYO-GCP project to a single YouCoded-owned verified app. Requires ~4–6 weeks of Google review, a public YouCoded homepage, published privacy policy, demo video, and ongoing ownership by Destin. Revisit once v1 has measurable usage — verification is expensive to maintain and doesn't pay back without a user base.
 - Shared Drive / Workspace tenant-admin flows.
 
 ---
