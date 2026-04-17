@@ -6,6 +6,7 @@ wecoded-themes/
 wecoded-marketplace/
 
 # Worktrees and temp directories
+.worktrees/
 *-worktree*/
 *-unified/
 *-phase*/
