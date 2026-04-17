@@ -1,11 +1,12 @@
 # Apple Services Bundle — Design
 
-**Status:** Draft — pending user review before transitioning to implementation plan.
+**Status:** Draft — revised 2026-04-17 after design-review critique. Pending user review before transitioning to implementation plan.
 **Created:** 2026-04-17
 **Owner:** Destin
 **Supersedes in scope:** the "Apple Services" section of `docs/superpowers/plans/2026-04-17-remaining-bundles-handoff.md`. That briefing's phased "3rd-party MCP → native Swift helper" recommendation is explicitly discarded; this spec evaluates the full option landscape fresh and commits to a different direction.
-**Depends on:** `2026-04-17-marketplace-attributions-design.md` (to be written as a follow-up) for schema-field rendering and `VENDORED.md` validation. See Section 6 for coordination rules — neither PR blocks the other.
-**Research findings (to be produced):** `docs/superpowers/plans/research/2026-04-17-apple-*.md` — 16 items enumerated in Section 7.
+**Depends on:** `2026-04-17-marketplace-attributions-design.md` (to be written as a follow-up) for schema-field rendering and `VENDORED.md` validation. See Section 6 for coordination rules — neither PR blocks the other. Platform-gating (showing macOS-only plugins on non-Mac hosts with a disabled Install button + note) is also defined in Spec B — see "Platform gating" below.
+**Research findings (to be produced):** `docs/superpowers/plans/research/2026-04-17-apple-*.md` — 9 items enumerated in Section 7.
+**macOS floor:** 14.0 (Sonoma). Fixed up front to avoid `if #available(macOS 14, *)` branching and to keep iMCP's stock modules importable without a fork. Users on macOS 13 see a clear "requires macOS 14 or later" message from `/apple-services-setup` step 1.
 
 ---
 
@@ -41,7 +42,9 @@ This bundle is **infrastructure** — a tools layer for Claude and for downstrea
 | Mail | AppleScript via `osascript` | No public API exists |
 | iCloud Drive | Plain filesystem at `~/Library/Mobile Documents/com~apple~CloudDocs/` | Already mounted; nothing to build |
 
-**`apple-helper`** — small Swift CLI, distributed as a universal (arm64+x86_64) Mach-O binary. Ad-hoc signed (`codesign --sign -`), NOT notarized, NOT Developer-ID signed. Matches YouCoded desktop's current unsigned posture. The binary is downloaded during `/apple-services-setup` from the plugin's GitHub releases, not checked into the plugin directory.
+**`apple-helper`** — small Swift CLI, distributed as a universal (arm64+x86_64) Mach-O binary. Ad-hoc signed (`codesign --sign -`), NOT notarized, NOT Developer-ID signed. Matches YouCoded desktop's current unsigned posture.
+
+**Binary delivery — vendored in the plugin tree, copied to a stable path at setup.** CI builds the universal binary on `apple-helper-v*` tags and commits it to `bin/apple-helper` in the plugin repo. Marketplace sync picks it up like any other plugin file; no network round-trip at install time. `/apple-services-setup` copies the binary to `~/.apple-services/bin/apple-helper` (outside the plugin tree) so TCC grants survive plugin updates and reinstalls. See "Binary lifecycle" under Architecture for the full flow.
 
 **AppleScript files** — vendored from open source (primarily `Dhravya/apple-mcp`) and adapted. Shipped in `applescript/` inside the plugin.
 
@@ -53,6 +56,17 @@ This bundle is **infrastructure** — a tools layer for Claude and for downstrea
 
 Borrowed files are tracked in `VENDORED.md` (see Section 6). Upstream license terms are reproduced in `NOTICE.md`.
 
+## Platform gating
+
+Apple Services is macOS-only. The bundle still **appears** in the wecoded-marketplace listing on Linux and Windows — hiding it would confuse users who read about it elsewhere — but its Install button is disabled with a note reading "Only available on Mac."
+
+This requires Spec B to add two fields to the plugin schema:
+
+- `platforms: ["macos"]` — if present, the desktop app renders the card with a disabled Install button and the per-platform note. Absent field = installable everywhere (current default).
+- Apple Services sets `platforms: ["macos"]` in its `plugin.json`.
+
+If Spec B ships after Apple Services, the field is silently ignored on older desktop-app versions and the user who tries to install on Linux hits Step 1's `uname` check. That's acceptable degradation, not a blocker. Step 1 remains the belt-and-suspenders check regardless.
+
 ## TCC / permission strategy
 
 Apple services have no OAuth tokens. Permission is managed by macOS's **TCC** (Transparency, Consent & Control) subsystem. Three distinct grants are involved:
@@ -62,7 +76,7 @@ Apple services have no OAuth tokens. Permission is managed by macOS's **TCC** (T
 | Full Access — Calendars | EventKit read/write of calendars + events | `apple-helper` | `requestFullAccessToEvents` call in helper |
 | Full Access — Reminders | EventKit read/write of reminders | `apple-helper` | `requestFullAccessToReminders` call in helper |
 | Access — Contacts | Contacts framework read/write | `apple-helper` | `CNContactStore.requestAccess(for: .contacts)` |
-| Automation — Notes | AppleScript control of Notes.app | parent process (see Phase 0 R9) | First `osascript` call to Notes |
+| Automation — Notes | AppleScript control of Notes.app | parent process (see Phase 0 R3) | First `osascript` call to Notes |
 | Automation — Mail | AppleScript control of Mail.app | parent process | First `osascript` call to Mail |
 
 No TCC grants are needed for iCloud Drive (plain filesystem under user's home). No Full Disk Access is required for any op in scope.
@@ -81,40 +95,43 @@ Mirrors the Google Services policy exactly.
 
 ### Bundle layout
 
+Swift source lives in a sibling dev repo (`itsdestin/apple-helper`) — **not** in the shipped plugin. The plugin tree contains only the prebuilt binary + shell glue + AppleScript assets. CI in the sibling repo builds on `apple-helper-v*` tags and opens a PR against the marketplace repo that updates `bin/apple-helper` + `bin/apple-helper.sha256` in the plugin tree. Reviewing the PR is the gate.
+
 ```
 wecoded-marketplace/apple-services/
-  plugin.json                          # v1.0.0, platform: macos
+  plugin.json                          # v0.1.0, platforms: ["macos"]
   VENDORED.md                          # per-file attribution tracking
   NOTICE.md                            # license texts for borrowed code
 
   commands/
     apple-services-setup.md            # /apple-services-setup slash command
 
-  skills/
-    apple-calendar/SKILL.md            # one sibling skill per integration
+  skills/                              # umbrella + focused per-op skills,
+                                       # matching google-services pattern
+    apple-calendar/SKILL.md            # umbrella (describes the surface)
+    apple-calendar-agenda/SKILL.md     # focused: "what's on my calendar"
+    apple-calendar-create/SKILL.md     # focused: create event
     apple-reminders/SKILL.md
+    apple-reminders-add/SKILL.md
+    apple-reminders-list/SKILL.md
     apple-contacts/SKILL.md
+    apple-contacts-find/SKILL.md
     apple-notes/SKILL.md
+    apple-notes-search/SKILL.md
+    apple-notes-write/SKILL.md
     apple-mail/SKILL.md
+    apple-mail-send/SKILL.md
+    apple-mail-search/SKILL.md
     icloud-drive/SKILL.md
 
   lib/
-    apple-helper-wrapper.sh            # shared wrapper for the Swift binary
-    applescript-runner.sh              # shared osascript wrapper (Notes/Mail)
+    apple-wrapper.sh                   # single wrapper: dispatches to helper
+                                       # binary or osascript by --backend flag
 
   bin/
-    apple-helper                       # universal Mach-O; downloaded by setup,
-                                       # NOT checked into git
-
-  helper/                              # Swift source for the binary
-    Package.swift
-    Sources/
-      AppleHelper/                     # CLI entry, arg parsing, JSON output
-      FromIMCP/                        # vendored iMCP service modules
-        CalendarService.swift
-        RemindersService.swift
-        ContactsService.swift
-      AppleHelperCore/                 # shared: JSON encoding, errors, TCC probes
+    apple-helper                       # universal Mach-O, committed to git
+                                       # by CI on apple-helper-v* tags
+    apple-helper.sha256                # expected hash; setup verifies
 
   applescript/                         # vendored from Dhravya/apple-mcp
     notes/
@@ -134,47 +151,70 @@ wecoded-marketplace/apple-services/
       mark-read.applescript
 
   setup/
-    strip-quarantine.sh                # xattr -d on downloaded binary
     permissions-walkthrough.md         # TCC walkthrough content (shown by setup)
-    smoke-test.sh                      # post-install read-only probe per integration
 
-  docs/
-    DEV-VERIFICATION.md                # round-trip checklist (not shipped)
+  .dev/                                # excluded from marketplace sync
+    DEV-VERIFICATION.md                # round-trip checklist
 ```
 
-GitHub Actions requires `.github/workflows/` at a repository root, so the helper-build workflow lives at `wecoded-marketplace/.github/workflows/apple-helper-build.yml` (alongside the existing `validate-plugin-pr.yml`). It triggers on tags matching `apple-helper-v*`, builds the universal binary on `macos-latest`, and attaches it to a GitHub release in the marketplace repo. The plugin's `setup/` step 2 resolves the latest release by tag pattern.
+### Binary lifecycle
+
+1. **Build** — developer tags `apple-helper-vX.Y.Z` in `itsdestin/apple-helper`. CI builds universal binary on `macos-latest` via `swift build -c release` + `lipo`, ad-hoc signs (`codesign --sign -`), emits SHA256.
+2. **Vendor** — CI opens a PR against `wecoded-marketplace` updating `apple-services/bin/apple-helper` + `.sha256`. PR description includes the upstream tag, the binary size, and the SHA.
+3. **Distribute** — merging the PR ships the new binary via the normal marketplace sync. No separate GitHub release is needed on the marketplace side.
+4. **Install at setup time** — `/apple-services-setup` copies `<plugin>/bin/apple-helper` to `~/.apple-services/bin/apple-helper` (stable, plugin-independent path), strips the quarantine xattr, and verifies SHA256. The wrapper script always invokes the copied binary, never the plugin-tree binary.
+
+### Why the stable path
+
+TCC grants are keyed to (code-sign identity, binary path) for ad-hoc-signed binaries. The plugin directory path is NOT stable: `~/.claude/plugins/marketplaces/youcoded/plugins/apple-services/` can change across Claude Code versions, plugin reinstalls, or marketplace-sync migrations. Copying to `~/.apple-services/bin/apple-helper` — a path this bundle controls — means TCC grants persist across plugin updates and reinstalls, so users re-grant only when we genuinely change the binary (see R3 below).
+
+On re-setup, the copy is skipped if `~/.apple-services/bin/apple-helper` already exists and its SHA256 matches `bin/apple-helper.sha256` from the current plugin tree.
 
 ### Binary invocation shape
 
-Skills do not call `osascript` or `apple-helper` directly — they go through wrappers. The Swift helper's CLI surface looks like:
+Skills do not call `osascript` or `apple-helper` directly — they go through a single wrapper `lib/apple-wrapper.sh`. The wrapper's own CLI is uniform across backings; it decides internally whether to shell out to the Swift helper or to `osascript`:
 
 ```bash
-apple-helper calendar list --from 2026-04-17 --to 2026-04-24
-apple-helper calendar create --title "Meeting" --start 2026-04-17T14:00 --end 2026-04-17T15:00
-apple-helper reminders list --incomplete-only --list "Today"
-apple-helper contacts search --query "jenny"
+apple-wrapper.sh calendar list_calendars
+apple-wrapper.sh calendar list_events --from 2026-04-17 --to 2026-04-24
+apple-wrapper.sh calendar create_event --title "Meeting" --start 2026-04-17T14:00 --end 2026-04-17T15:00
+apple-wrapper.sh reminders list_reminders --list "Today" --incomplete-only
+apple-wrapper.sh notes search_notes --query "tahoe" --folder "Trips"
+apple-wrapper.sh mail search --query "lease renewal" --limit 10
 ```
 
-**Output contract:**
+**CLI verb mapping is 1:1 with op names, snake_case.** Every op in the per-integration tables below (`list_calendars`, `create_event`, `list_reminders`, `search_notes`, `send`, etc.) is invokable as `apple-wrapper.sh <integration> <op> [args]`. No separate translation layer, no verb aliasing. Skills call `apple-wrapper.sh` with the same op name the tables document.
+
+**Routing inside the wrapper:**
+
+| Integration | Backend | Shell action |
+|---|---|---|
+| calendar, reminders, contacts | Swift helper | `exec ~/.apple-services/bin/apple-helper <integration> <op> ...` |
+| notes, mail | AppleScript | `exec osascript "$PLUGIN_DIR/applescript/<integration>/<op>.applescript" ...args` |
+| icloud | Filesystem | Pure bash (no shell-out) |
+
+**Output contract** (identical across backends):
 - Success: JSON array or object to stdout, exit code 0.
-- Failure: JSON error object to stderr, nonzero exit code.
+- Failure: JSON error envelope (Section 4) to stderr, nonzero exit code.
 - TCC permission denied: exit code 2, stderr contains `TCC_DENIED:<service>` marker (modeled on Google Services' `AUTH_EXPIRED:<service>`).
+- Stdout is always clean on success — no log chatter. Diagnostics go to stderr.
 
 ### Wrapper responsibilities
 
-**`lib/apple-helper-wrapper.sh`** wraps every Swift helper call:
-- Locates the binary at `$PLUGIN_DIR/bin/apple-helper` (with `$APPLE_HELPER_BIN` override for testing).
-- Detects missing binary → emits a clear message pointing to `/apple-services-setup`.
-- Detects `TCC_DENIED:<service>` → emits uniform error telling Claude how to recover.
-- Normalizes Swift JSON output for consumption by skills.
+`lib/apple-wrapper.sh`:
+- Looks up the integration→backend mapping above.
+- For Swift-helper ops: locates binary at `~/.apple-services/bin/apple-helper` (override: `$APPLE_HELPER_BIN`); emits `UNAVAILABLE` with a pointer to `/apple-services-setup` if missing or non-executable.
+- For AppleScript ops: resolves `$PLUGIN_DIR/applescript/<integration>/<op>.applescript`, passes positional args via `osascript ... -- arg1 arg2` (received as `on run argv` in the script), enforces per-op timeout (see below), catches error -1743 → emits `TCC_DENIED:<service>`.
+- For iCloud ops: resolves path against `~/Library/Mobile Documents/com~apple~CloudDocs/`, rejects paths escaping that root, handles `.icloud` placeholders (returns `UNAVAILABLE`, never reads the stub).
+- Normalizes all backend output to the uniform error envelope + JSON success shape.
 
-**`lib/applescript-runner.sh`** wraps every `osascript` call:
-- Takes a script filename from `applescript/` plus argument substitutions.
-- Catches AppleScript permission failures (error -1743) → same `TCC_DENIED:<service>` pattern.
-- Enforces a 30-second timeout to catch stuck target apps (e.g. Mail.app in first-run wizard).
-- Returns results as JSON where reasonable; raw text where not.
+**Per-op timeout** (not a single blanket value):
+- Setup probes (step 6): 10 s.
+- Read-mostly ops (`list_*`, `get_*`): 15 s.
+- Search ops: 60 s (Mail searches on large mailboxes can legitimately take 30+ s).
+- Write ops (`create_*`, `update_*`, `delete_*`, `send`): 20 s.
 
-Both wrappers emit identical `TCC_DENIED` markers so Claude's recovery logic is uniform regardless of backing.
+**Concurrency:** the wrapper acquires a per-target-app file lock (`flock` on `$TMPDIR/apple-services.<integration>.lock`) for Notes and Mail so two concurrent skill calls don't fight over the same `osascript` target. EventKit/Contacts ops via the Swift helper are thread-safe at the Apple API level; no lock needed.
 
 ### Non-goals at the architecture layer
 
@@ -187,7 +227,11 @@ Both wrappers emit identical `TCC_DENIED` markers so Claude's recovery logic is 
 
 ## Per-integration operation surfaces
 
-Each skill exposes a focused operation set. Parameters and return shapes given here are contractual — they define what Claude sees.
+Each *operation* below is contractual — parameters and return shapes define what Claude sees.
+
+**Skill granularity follows the Google Services pattern: one umbrella SKILL per integration plus focused per-op skills for the common operations.** The umbrella SKILL describes the full surface (useful when Claude needs to pick from many ops); the per-op skills give the Skill-tool matcher narrow, intent-specific descriptions for the high-traffic cases ("send an email," "add a reminder," "find a contact"). Umbrella + per-op skills dispatch to the same `apple-wrapper.sh` ops listed below — skills are routing/UX, ops are the contract.
+
+Which ops get their own per-op skill is listed in the bundle layout's `skills/` tree above; the rest are reachable through the umbrella.
 
 ### apple-calendar
 
@@ -239,6 +283,8 @@ Each skill exposes a focused operation set. Parameters and return shapes given h
 | `update_note` | `id`, `body_markdown`, `mode?` (replace/append/prepend) | `note` |
 | `delete_note` | `id` | `{ok: true}` |
 
+**Notes rich-content caveat:** Apple Notes stores rich HTML (images, drawings, tables, attachments). Markdown round-trips lose non-text content. `update_note` with `mode: replace` will destroy images, drawings, tables, and attachments in the target note. `append` and `prepend` preserve existing content and are the safe defaults for modifying a note Claude didn't originally create. The umbrella SKILL warns Claude about this; per-op skills for `update_note` default to `append`.
+
 ### apple-mail
 
 | Op | Parameters | Returns |
@@ -270,28 +316,45 @@ All paths are relative to `~/Library/Mobile Documents/com~apple~CloudDocs/`. The
 
 `/apple-services-setup` is a markdown slash command, linear, idempotent, aborts on unrecoverable error. Seven steps:
 
-### Step 1 — Platform check
+### Step 1 — Platform + version check
 
 ```bash
 if [ "$(uname)" != "Darwin" ]; then
   echo "Apple Services only works on macOS — install on a Mac to use this bundle."
   exit 1
 fi
+
+# macOS floor: 14.0 (Sonoma). EventKit's Full Access APIs and iMCP service
+# modules both require macOS 14+.
+macos_major=$(sw_vers -productVersion | cut -d. -f1)
+if [ "$macos_major" -lt 14 ]; then
+  echo "Apple Services requires macOS 14 (Sonoma) or later. You're on $(sw_vers -productVersion)."
+  echo "Update macOS from System Settings → General → Software Update, then re-run this."
+  exit 1
+fi
 ```
 
-Marketplace gates this bundle to `platform: macos`; this is a belt-and-suspenders check.
+Spec B's marketplace-side `platforms: ["macos"]` gate handles the Linux/Windows case; these checks are belt-and-suspenders.
 
-### Step 2 — Download the helper binary
+### Step 2 — Install the helper binary to a stable path
 
-1. Detect architecture via `arch`: `arm64` or `x86_64`.
-2. Download `apple-helper-universal` from the pinned GitHub release URL.
-3. Verify SHA256 against the published checksum.
-4. Strip quarantine: `xattr -d com.apple.quarantine bin/apple-helper`.
-5. `chmod +x bin/apple-helper`.
+Universal binary ships inside the plugin at `$PLUGIN_DIR/bin/apple-helper` — no network fetch. Setup copies it to a stable, plugin-independent path so TCC grants persist across plugin updates:
 
-**Idempotency:** if `bin/apple-helper` exists and SHA matches expected, skip.
-**Pre-frame:** "I'm downloading a small tool that lets Claude talk to Calendar, Reminders, and Contacts. About 1 MB, one-time."
-**Failure path:** retry once, then print release URL and manual-install instructions.
+```bash
+install_dir="$HOME/.apple-services/bin"
+mkdir -p "$install_dir"
+cp "$PLUGIN_DIR/bin/apple-helper" "$install_dir/apple-helper"
+xattr -d com.apple.quarantine "$install_dir/apple-helper" 2>/dev/null || true
+chmod +x "$install_dir/apple-helper"
+
+expected_sha=$(cat "$PLUGIN_DIR/bin/apple-helper.sha256")
+actual_sha=$(shasum -a 256 "$install_dir/apple-helper" | cut -d' ' -f1)
+[ "$expected_sha" = "$actual_sha" ] || { echo "Helper binary verification failed."; exit 1; }
+```
+
+**Idempotency:** if `$install_dir/apple-helper` exists and its SHA matches `bin/apple-helper.sha256`, the copy is skipped entirely (preserves TCC grants — no inode change).
+**Pre-frame:** "Setting up a small tool that lets Claude talk to Calendar, Reminders, and Contacts. One-time, happens locally."
+**Failure path:** SHA mismatch → emit "The bundled helper didn't match its checksum — your plugin install may be corrupted. Reinstall Apple Services from the marketplace and try again."
 
 ### Step 3 — iCloud Drive availability check
 
@@ -306,18 +369,18 @@ fi
 ### Step 4 — EventKit + Contacts permissions
 
 ```bash
-bin/apple-helper --request-permissions
+~/.apple-services/bin/apple-helper --request-permissions
 ```
 
-The helper internally calls:
-- `EKEventStore().requestFullAccessToEvents { ... }`
-- `EKEventStore().requestFullAccessToReminders { ... }`
-- `CNContactStore().requestAccess(for: .contacts) { ... }`
+The helper requests grants **serially** (awaits each dialog's result before triggering the next) so dialogs appear in a predictable order:
 
-macOS shows three system dialogs in sequence.
+1. `EKEventStore().requestFullAccessToEvents { ... }`  (macOS 14 API; floor is 14 so no fallback needed)
+2. `EKEventStore().requestFullAccessToReminders { ... }`
+3. `CNContactStore().requestAccess(for: .contacts) { ... }`
 
-**Pre-frame:** "macOS is about to show three permission dialogs — for Calendar, Reminders, and Contacts. Each one will say a tool called 'apple-helper' wants access. That's us. Click **Allow** on all three."
+**Pre-frame:** "macOS is about to show three permission dialogs, in this order: Calendar, then Reminders, then Contacts. Each will ask whether a tool called 'apple-helper' can access that data. Click **Allow** on all three."
 **Failure path:** helper exits with `TCC_DENIED:<service>`. Setup emits "Looks like [Calendar] access was denied. Open System Settings → Privacy & Security → [Calendars], find 'apple-helper' in the list and turn it on. Then re-run `/apple-services-setup`."
+**Display-name caveat:** the literal label in the TCC dialog is determined by `CFBundleDisplayName` in the binary's embedded Info.plist (Phase 0 R3). If the experiment lands on a different label, the pre-frame copy updates to match.
 **Idempotency:** if grants already exist, `requestFullAccess*` returns immediately without re-prompting.
 
 ### Step 5 — Automation permissions for Notes and Mail
@@ -329,9 +392,19 @@ osascript -e 'tell application "Notes" to count notes'
 osascript -e 'tell application "Mail" to count messages of inbox'
 ```
 
-**Pre-frame:** "macOS is about to ask if Claude can control Notes and Mail. Click **OK** on both prompts."
-**Failure path:** denial → "Automation access to [Notes] was denied. Open System Settings → Privacy & Security → Automation → find the terminal app Claude runs in → turn on [Notes]."
-**Quirk:** if Mail isn't fully set up, `count messages of inbox` hangs. Run with 10s timeout; emit "Mail isn't fully set up yet — open Mail.app and finish account setup, then re-run."
+**Automation TCC scope:** the grant attaches to the *invoking* process, not to `osascript` itself. Which process that is depends on how Claude is running:
+
+| Claude host | Invoking process seen by TCC | What the user sees in System Settings → Automation |
+|---|---|---|
+| YouCoded desktop (Electron) | The YouCoded app bundle | "YouCoded" → allow Notes / allow Mail |
+| Claude Code CLI in Terminal.app | Terminal.app | "Terminal" → allow Notes / allow Mail |
+| Claude Code CLI in iTerm2 | iTerm2 | "iTerm" → allow Notes / allow Mail |
+
+Setup detects the parent context (`ps -o comm= -p $PPID` + check for YouCoded env vars) and substitutes the right app name into user-facing copy.
+
+**Pre-frame (templated):** "macOS is about to ask if **{{host_app}}** can control Notes, then the same for Mail. Click **OK** on both prompts."
+**Failure path:** denial → "Automation access was denied. Open System Settings → Privacy & Security → Automation → find **{{host_app}}** in the list and turn on the **Notes** (or **Mail**) toggle underneath it."
+**Quirk:** if Mail isn't fully set up, `count messages of inbox` hangs. Run with 10 s timeout; emit "Mail isn't fully set up yet — open Mail.app, finish account setup, then re-run."
 
 ### Step 6 — Smoke test each integration
 
@@ -339,12 +412,12 @@ Read-only probes:
 
 | Integration | Probe | Expected |
 |---|---|---|
-| Calendar | `apple-helper calendar list_calendars` | ≥1 calendar |
-| Reminders | `apple-helper reminders list_lists` | ≥1 list |
-| Contacts | `apple-helper contacts search --query "" --limit 1` | array returned |
-| Notes | `osascript list-folders.applescript` | ≥1 folder |
-| Mail | `osascript list-mailboxes.applescript` | ≥1 mailbox |
-| iCloud Drive | `stat ~/Library/Mobile Documents/com~apple~CloudDocs` | directory exists |
+| Calendar | `apple-wrapper.sh calendar list_calendars` | ≥1 calendar |
+| Reminders | `apple-wrapper.sh reminders list_lists` | ≥1 list |
+| Contacts | `apple-wrapper.sh contacts list_groups` | ≥0 groups, no error |
+| Notes | `apple-wrapper.sh notes list_folders` | ≥1 folder |
+| Mail | `apple-wrapper.sh mail list_mailboxes` | ≥1 mailbox |
+| iCloud Drive | `apple-wrapper.sh icloud list --path ""` | directory enumerable |
 
 All six run regardless of individual failures. The summary reports pass/fail per integration with specific remediation.
 
@@ -432,10 +505,10 @@ Do not retry automatically. Wait for the user to confirm, then resume.
 
 ### Binary-update re-prompt risk
 
-Ad-hoc-signed binaries can invalidate TCC grants when the binary hash changes (Phase 0 R7 verifies). Mitigations:
+Ad-hoc-signed binaries can invalidate TCC grants when the binary hash changes (Phase 0 R3 verifies). Mitigations:
 
 1. **Consistent signing identity + entitlements** to maximize grant persistence.
-2. **Version probe in wrapper** — `apple-helper-wrapper.sh` checks `apple-helper --version` against expected value; on mismatch, runs a permission probe. If the probe fails, emits `TCC_DENIED` with recovery pointing to `/apple-services-setup` instead of silently re-prompting.
+2. **Version probe in wrapper** — `apple-wrapper.sh` checks `apple-helper --version` against the value in `bin/apple-helper.sha256` metadata; on mismatch, runs a permission probe. If the probe fails, emits `TCC_DENIED` with recovery pointing to `/apple-services-setup` instead of silently re-prompting.
 3. **Accepted fallback** — if consistent identity doesn't preserve grants, we document as known minor friction (users see "macOS re-asked for Calendar access" once per update, click Allow, move on).
 
 ### AppleScript-specific failure modes
@@ -447,7 +520,7 @@ Ad-hoc-signed binaries can invalidate TCC grants when the binary hash changes (P
 | Scripting command not on this macOS | `osascript` error -10000 | `INTERNAL` |
 | Automation permission denied | `osascript` error -1743 | `TCC_DENIED` |
 
-**macOS version floor:** 13.0 (Ventura). AppleScript vocabulary pinned to what's stable on 13+.
+**macOS version floor:** 14.0 (Sonoma). AppleScript vocabulary pinned to what's stable on 14+.
 
 ### iCloud Drive edge cases
 
@@ -457,7 +530,9 @@ Ad-hoc-signed binaries can invalidate TCC grants when the binary hash changes (P
 
 ### Helper binary missing or corrupted
 
-Wrapper verifies binary exists and is executable before each call. On mismatch, emits `UNAVAILABLE` with recovery: "Run /apple-services-setup to install the helper."
+Wrapper verifies `~/.apple-services/bin/apple-helper` exists and is executable before each call. On missing or failing-to-exec, emits `UNAVAILABLE` with recovery: "Run /apple-services-setup to reinstall the helper."
+
+On binary-update re-prompt (see R3): if `apple-helper --version` disagrees with the SHA in `bin/apple-helper.sha256`, the wrapper re-runs the copy-to-stable-path step automatically, then retries once. Only falls through to `TCC_DENIED` messaging if the retry also fails.
 
 ### Explicit non-behaviors
 
@@ -521,14 +596,18 @@ Cross-cutting mechanism (schema field, drift-check script, author nudges, CI enf
 
 ```json
 {
-  "id": "apple-services",
-  "name": "Apple Services",
+  "name": "apple-services",
+  "description": "Calendar, Reminders, Contacts, Notes, Mail, and iCloud Drive in one setup. macOS only.",
+  "version": "0.1.0",
+  "author": { "name": "YouCoded" },
+  "license": "MIT",
+  "platforms": ["macos"],
   "attributions": [
     {
       "name": "iMCP",
       "url": "https://github.com/loopwork/iMCP",
       "license": "Apache-2.0",
-      "scope": "Swift service modules for Calendar, Reminders, Contacts"
+      "scope": "Swift service modules (Calendar, Reminders, Contacts) compiled into bin/apple-helper"
     },
     {
       "name": "apple-mcp",
@@ -554,11 +633,11 @@ At `wecoded-marketplace/apple-services/VENDORED.md`:
 
 | File | Source repo | Upstream path | SHA pulled | License | Last pulled |
 |---|---|---|---|---|---|
-| `helper/Sources/FromIMCP/CalendarService.swift` | `loopwork/iMCP` | `Sources/iMCPServer/Services/CalendarService.swift` | *filled Phase 1* | Apache-2.0 | 2026-04-17 |
-| `helper/Sources/FromIMCP/RemindersService.swift` | `loopwork/iMCP` | `Sources/iMCPServer/Services/RemindersService.swift` | *filled Phase 1* | Apache-2.0 | 2026-04-17 |
-| `helper/Sources/FromIMCP/ContactsService.swift` | `loopwork/iMCP` | `Sources/iMCPServer/Services/ContactsService.swift` | *filled Phase 1* | Apache-2.0 | 2026-04-17 |
-| `applescript/notes/*.applescript` | `Dhravya/apple-mcp` | *paths confirmed by Phase 0 R5* | *filled Phase 1* | MIT | 2026-04-17 |
-| `applescript/mail/*.applescript` | `Dhravya/apple-mcp` | *paths confirmed by Phase 0 R5* | *filled Phase 1* | MIT | 2026-04-17 |
+| `bin/apple-helper` (universal Mach-O, built from `itsdestin/apple-helper` Swift sources; service modules vendored from `loopwork/iMCP`) | `loopwork/iMCP` | `Sources/iMCPServer/Services/{Calendar,Reminders,Contacts}Service.swift` | *filled Phase 1* | Apache-2.0 | 2026-04-17 |
+
+*Note: Swift sources live in the sibling `itsdestin/apple-helper` dev repo. The marketplace plugin tree ships only the prebuilt binary; attribution and SHA tracking follow the binary into this repo. `itsdestin/apple-helper/VENDORED.md` tracks the upstream file-level SHAs for the iMCP modules that compose the binary.*
+| `applescript/notes/*.applescript` | `Dhravya/apple-mcp` | *paths confirmed by Phase 0 R4* | *filled Phase 1* | MIT | 2026-04-17 |
+| `applescript/mail/*.applescript` | `Dhravya/apple-mcp` | *paths confirmed by Phase 0 R4* | *filled Phase 1* | MIT | 2026-04-17 |
 
 ### `NOTICE.md` contents
 
@@ -590,49 +669,35 @@ Neither spec blocks the other's PR:
 
 Each item: question, resolution method, fallback. BLOCKING items must resolve before Phase 1 begins. Resolved in parallel subagents; each produces a findings file at `docs/superpowers/plans/research/2026-04-17-apple-<topic>.md`. Empirical waits over 1 hour are skipped per Google Services precedent.
 
+9 items, down from an earlier 16. Consolidations: the three iMCP sub-questions (extractability, op coverage, Notes/Mail coverage) collapse into one audit; TCC display-string + TCC re-prompt + Automation parent-process land in one TCC-behavior item; osascript error-code stability and Mail.app first-run detection fold into one AppleScript-quirks item.
+
 ### Cluster 1 — Borrowed-code audit (BLOCKING)
 
 **R1. License verification.** Confirm iMCP (Apache-2.0 expected), Dhravya/apple-mcp (MIT expected), Reminders-CLI (MIT expected) by reading `LICENSE` at `HEAD`. **Fallback:** if copyleft, treat as reference only, rewrite (~2 extra days).
 
-**R2. iMCP module extractability.** Read `Package.swift` and trace imports in Calendar/Reminders/Contacts service files. **Fallback:** extract larger subtree, or reimplement using iMCP as reference.
+**R2. iMCP audit — extractability + coverage + scope.** Single audit covering: (a) can Calendar/Reminders/Contacts service modules compile outside iMCP's menu-bar host (read `Package.swift`, trace imports); (b) coverage matrix against Section 2's op list; (c) does iMCP also cover Notes or Mail (search `Sources/`). **Fallback:** uncovered ops written from Apple docs; Notes/Mail stay on AppleScript if iMCP doesn't cover them.
 
-**R3. iMCP coverage vs our needs.** Map iMCP's exposed functions against Section 2 operation list. Produce coverage matrix. **Fallback:** write uncovered ops from Apple docs.
+**R3. TCC behavior (empirical, ~2 hours).** Three sub-questions, one test session on a fresh macOS 14+ VM or `tccutil reset`-ed host: (i) display-string experiment — does `CFBundleDisplayName` in an embedded Info.plist control the dialog label? (ii) re-prompt on ad-hoc binary update — build v1, grant, replace binary with trivially-different v1.0.0+1 at the same path, observe whether macOS re-prompts; (iii) Automation scope confirmation — verify the parent-process attribution table in Step 5 matches reality from YouCoded desktop and from Terminal. **Fallback:** whatever the dialog says becomes the pre-frame copy; re-prompt becomes documented friction if unavoidable; parent-process copy adjusts per observed attribution.
 
-**R4. Does iMCP cover Notes or Mail?** Search iMCP's `Sources/`. **Fallback:** if absent, stay with AppleScript; if present, compare and choose.
+**R4. Dhravya AppleScript inventory.** Enumerate `.applescript` / `.scpt` files and per-file license notices in `Dhravya/apple-mcp`. Map files against the Section 2 Notes + Mail ops. **Fallback:** write from scratch (~1 extra day).
 
-**R5. Dhravya AppleScript inventory.** Enumerate `.applescript` / `.scpt` files in the repo. **Fallback:** write from scratch (~1 extra day).
+### Cluster 2 — macOS API compatibility (BLOCKING)
 
-**R6. iMCP per-module minimum macOS.** Inspect `@available` annotations; cross-check EventKit/Contacts API availability. **Fallback:** fork and rewrite calls that require macOS 15.3+.
+**R5. iMCP per-module API availability vs macOS 14 floor.** Inspect `@available` on every service function we plan to call. Any `@available(macOS 15, *)` or later usage forces either a fork + rewrite or a floor bump. **Fallback:** fork the offending service module and implement against the macOS 14 API shape.
 
-### Cluster 2 — TCC behavior (BLOCKING)
+**R6. Swift version target + universal binary recipe.** Confirm iMCP's declared `swift-tools-version` works on whatever Swift ships with `macos-latest` GitHub-hosted runners. Confirm SwiftPM `-arch arm64 -arch x86_64` produces a universal Mach-O without post-processing, or whether a per-arch matrix + `lipo` merge is needed. **Fallback:** parallel arm64/x86_64 matrix jobs + `lipo -create` in a merge job.
 
-**R7. TCC re-prompt on ad-hoc binary update.** Build two binaries with trivial differences; install sequentially; observe. ~1 hour. **Fallback:** document as known friction.
+### Cluster 3 — AppleScript + runtime quirks (non-blocking)
 
-**R8. TCC attribution display string.** Build test helper; screenshot `requestFullAccessToEvents` prompt. Experiment with `CFBundleDisplayName` in embedded Info.plist. **Fallback:** whatever prompt says → pre-framed in setup copy.
+**R7. AppleScript error-code + first-run-detection spot-check.** Confirm error -1743 (Automation denial) and error -1728 ("Can't get object") surface from current macOS (14+) `osascript`. Spot-check whether `name of window 1 of application "Mail"` is a reliable first-run indicator. **Fallback:** wrapper parses error text as well as numeric code; stick with timeout + generic "Mail isn't fully set up" message.
 
-**R9. AppleScript Automation permission scope.** Apple TCC docs + empirical test from Claude Code. **Fallback:** walkthrough copy adjusted to actual parent-process semantics.
+**R8. `.icloud` placeholder detection.** Enumerate a directory with un-downloaded iCloud files; confirm entries appear as `.Filename.icloud` dot-prefixed files. Confirm `ls -a` / `readdir` surfaces them. **Fallback:** surface raw filesystem error; document as known edge.
 
-**R10. `osascript` error code stability.** Apple Technical Note TN2167 + macOS-version-specific SO threads. **Fallback:** wrapper parses error text as well as numeric code.
-
-### Cluster 3 — macOS API compatibility
-
-**R11. `requestFullAccessToEvents` on macOS 13 (BLOCKING).** EventKit release notes + header `@available`. **Fallback:** version-branch the call (`if #available(macOS 14, *)`) or bump floor.
-
-**R12. Swift version target (BLOCKING).** Check iMCP's `Package.swift` and `macos-latest` runner Swift version. **Fallback:** pin explicit Swift toolchain in CI.
-
-**R13. Universal binary build recipe (non-blocking, needs answer before CI work).** SwiftPM + `lipo` — straightforward per Apple docs. **Fallback:** if SwiftPM cross-arch build produces surprises, build separate arm64 and x86_64 binaries in parallel matrix jobs and `lipo`-combine in a merge job.
-
-### Cluster 4 — Runtime edge cases (non-blocking)
-
-**R14. `.icloud` placeholder detection.** Apple `FileProvider` docs + empirical. **Fallback:** surface raw filesystem error.
-
-**R15. Mail.app first-run detection.** AppleScript `name of window 1 of application "Mail"` comparison. **Fallback:** stick with timeout + generic message.
-
-**R16. Contacts framework vs AppleScript Contacts independence.** Apple Contacts docs + empirical. **Fallback:** if linked, one fewer prompt; if separate, walkthrough already handles it.
+**R9. Contacts framework vs AppleScript Contacts TCC independence.** Does granting Contacts access to the Swift helper also satisfy AppleScript `tell application "Contacts"`, or are they independent grants? (We don't use AppleScript for Contacts in v1, but this affects whether the inbox bundle's AppleScript Contacts usage would benefit from Apple Services grants.) **Fallback:** documented, no v1 behavioral change.
 
 ### Time budget
 
-Half a day to one day of parallel subagent work plus ~2 hours of human review. Any unfavorable BLOCKING finding triggers spec revision before Phase 1.
+1.5–2 days of parallel subagent work plus ~2 hours of human review. R3 alone consumes ~2 hours of wall-clock because TCC state caches between attempts and requires `tccutil reset` + re-grant between experiments. Any unfavorable BLOCKING finding triggers spec revision before Phase 1.
 
 ---
 
@@ -695,12 +760,12 @@ Matching Google Services: **Phase 4 is explicitly NOT delegated to subagents.** 
 
 Detailed task-level plan lives in the implementation plan (`docs/superpowers/plans/2026-04-17-apple-services-implementation.md`, to be written next via superpowers:writing-plans).
 
-**Phase 0 — Research.** 16 items above, parallel subagents, findings files.
-**Phase 1 — Vendor + Swift helper.** Pull iMCP modules, pull Dhravya AppleScript, write CLI plumbing, universal binary build in CI.
-**Phase 2 — Skills + wrappers.** Six SKILL.md files, shared wrappers, error envelope, setup command, smoke probes.
-**Phase 3 — Marketplace wiring.** `plugin.json`, `attributions` populated, `VENDORED.md`, `NOTICE.md`, registry entries.
+**Phase 0 — Research.** 9 items above, parallel subagents, findings files.
+**Phase 1 — Swift helper sibling repo.** Create `itsdestin/apple-helper`, pull iMCP modules, wire CLI plumbing + JSON output + TCC-denied marker, set up CI that builds universal binary on `apple-helper-v*` tags and opens a binary-update PR against `wecoded-marketplace`.
+**Phase 2 — Plugin tree.** Pull Dhravya AppleScript, write `apple-wrapper.sh` (single wrapper, all three backends), umbrella + per-op SKILL.md files, `/apple-services-setup` command, smoke probes. First `apple-helper` build lands via a manual merged PR to bootstrap the vendoring loop.
+**Phase 3 — Marketplace wiring.** `plugin.json` with `platforms: ["macos"]` and `attributions`, `VENDORED.md`, `NOTICE.md`, registry entries.
 **Phase 4 — Human DEV-VERIFICATION.** The 3-hour human pass.
-**Phase 5 — Release.** Tag helper binary release, submit marketplace PR.
+**Phase 5 — Release.** Tag `apple-helper-v0.1.0`, merge the auto-opened binary-update PR, then tag the marketplace plugin and submit the marketplace PR.
 
 ---
 
@@ -722,4 +787,4 @@ Detailed task-level plan lives in the implementation plan (`docs/superpowers/pla
 
 - **Consolidation of youcoded-inbox's AppleScript providers with apple-services skills.** Criteria for revisiting in Section 5.
 - **Shared-lib pattern across plugins.** Blocks deeper consolidation; not yet needed.
-- **TCC grant persistence across helper updates.** Depends on Phase 0 R7; may inform a signed-binary (Path B) upgrade later.
+- **TCC grant persistence across helper updates.** Depends on Phase 0 R3; may inform a signed-binary (Path B) upgrade later.
