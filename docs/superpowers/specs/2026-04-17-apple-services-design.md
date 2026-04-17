@@ -48,13 +48,14 @@ This bundle is **infrastructure** — a tools layer for Claude and for downstrea
 
 **AppleScript files** — vendored from open source (primarily `Dhravya/apple-mcp`) and adapted. Shipped in `applescript/` inside the plugin.
 
-**Aggressive OSS borrowing policy** — substantial code is lifted from open source rather than written from scratch. Specifically:
-- `loopwork/iMCP` — Swift service modules for Calendar, Reminders, Contacts (Apache-2.0 pending Phase 0 confirmation). The menu-bar-app packaging is discarded; the per-service modules are extracted and dropped into our CLI helper.
-- `Dhravya/apple-mcp` — AppleScript snippets for Notes and Mail (MIT pending Phase 0 confirmation).
-- `keith/Reminders-CLI` — Reference implementation for Reminders CLI surface and argument parsing (MIT pending Phase 0 confirmation).
-- Apple's own EventKit and Contacts framework sample code as authoritative references.
+**Aggressive OSS borrowing policy** — we lean on open source for implementation patterns but write most of the code ourselves, because the upstream shapes don't map cleanly to what we ship. Per Phase 0 R2/R4 (findings committed):
 
-Borrowed files are tracked in `VENDORED.md` (see Section 6). Upstream license terms are reproduced in `NOTICE.md`.
+- **`mattt/iMCP`** (MIT, repo moved from `loopwork/iMCP`) — Swift service patterns for Calendar, Reminders, Contacts are used as **reference-only**, not vendored as SwiftPM modules. iMCP is an Xcode project (no `Package.swift`) whose services are tightly coupled to in-repo `Tool`/`Value`/`Ontology`/`JSONSchema` types; decoupling them is more work than re-implementing against EventKit/Contacts directly. iMCP also only covers 9 of our 23 ops — every get-by-id, update, delete, and group-membership op is a gap. Our `apple-helper` binary calls EventKit/Contacts APIs directly; iMCP informs which patterns are clean and which edge cases to handle.
+- **`supermemoryai/apple-mcp`** (MIT, repo moved from `Dhravya/apple-mcp`) — AppleScript for Notes and Mail. Upstream embeds scripts inside TypeScript files; list-returning scripts return empty arrays because the author couldn't parse AppleScript records through `run-applescript`. We extract the script text manually, keep create/read/send paths mostly intact, and **rewrite list-returning paths using JXA** (which emits real JSON) or delimiter-joined text. Realistic vendor-vs-rewrite split is ~35% / 65%.
+- **`keith/Reminders-CLI`** (MIT) — Reference implementation for Reminders CLI surface + argument parsing.
+- Apple's own EventKit and Contacts framework sample code — authoritative references for the ~14 ops we implement from scratch.
+
+Attribution for reference-only code is via `NOTICE.md` + the `attributions` entries in `plugin.json`. The `VENDORED.md` table tracks only files actually copied byte-for-byte (Dhravya AppleScript extracts); patterns-inspired-by-iMCP are credited via NOTICE only.
 
 ## Platform gating
 
@@ -82,6 +83,25 @@ Apple services have no OAuth tokens. Permission is managed by macOS's **TCC** (T
 No TCC grants are needed for iCloud Drive (plain filesystem under user's home). No Full Disk Access is required for any op in scope.
 
 **Recovery from revoked permissions** is handled uniformly via the `TCC_DENIED` error code (Section 4) — the user never runs a dedicated "reauth" command; `/apple-services-setup` is idempotent and doubles as the re-grant flow.
+
+### Cross-repo dependency: Electron YouCoded.app Info.plist
+
+Phase 0 R3 surfaced that Automation TCC attributes grants to the **responsible process** — which, when Claude runs inside the YouCoded desktop Electron app, is YouCoded.app itself, not `osascript`. For the Automation dialogs in Step 5 to succeed, YouCoded.app's `Info.plist` must carry these usage-description keys:
+
+```xml
+<key>NSAppleEventsUsageDescription</key>
+<string>YouCoded controls Notes and Mail to let Claude help you work with them.</string>
+<key>NSCalendarsUsageDescription</key>
+<string>YouCoded uses Calendar to show, create, and update events on your behalf.</string>
+<key>NSRemindersUsageDescription</key>
+<string>YouCoded uses Reminders to show, create, and update reminders on your behalf.</string>
+<key>NSContactsUsageDescription</key>
+<string>YouCoded uses Contacts to look up and update contact details on your behalf.</string>
+```
+
+This is a **change to the `youcoded/desktop/` repo** (Electron-builder config or pre-build Info.plist patcher), NOT to this plugin. Without these keys, Automation prompts in Step 5 will fail silently or show an empty description and macOS may deny the grant.
+
+The plugin's Info.plist (embedded in `apple-helper`) carries the same keys for the EventKit/Contacts framework grants, which attach to the helper binary directly. Those two sets of keys are complementary, not duplicate.
 
 ## User-facing language policy
 
@@ -404,7 +424,7 @@ Setup detects the parent context (`ps -o comm= -p $PPID` + check for YouCoded en
 
 **Pre-frame (templated):** "macOS is about to ask if **{{host_app}}** can control Notes, then the same for Mail. Click **OK** on both prompts."
 **Failure path:** denial → "Automation access was denied. Open System Settings → Privacy & Security → Automation → find **{{host_app}}** in the list and turn on the **Notes** (or **Mail**) toggle underneath it."
-**Quirk:** if Mail isn't fully set up, `count messages of inbox` hangs. Run with 10 s timeout; emit "Mail isn't fully set up yet — open Mail.app, finish account setup, then re-run."
+**Quirk:** if Mail isn't fully set up, `count messages of inbox` blocks behind the modal account-setup wizard. Use `tell application "Mail" to count every account` as a faster pre-flight (Phase 0 R7): it returns 0 instantly when unconfigured, without hitting the inbox-construction path that stalls. The 10 s timeout stays as belt-and-suspenders for mid-indexing edge cases. Emit "Mail isn't fully set up yet — open Mail.app, finish account setup, then re-run."
 
 ### Step 6 — Smoke test each integration
 
@@ -524,9 +544,15 @@ Ad-hoc-signed binaries can invalidate TCC grants when the binary hash changes (P
 
 ### iCloud Drive edge cases
 
-- **`.icloud` placeholder files** — detected by extension; `read` returns `UNAVAILABLE` with recovery: "This file is in iCloud but not downloaded locally. Open Finder, right-click, Download Now, then retry."
+iCloud Drive uses **two placeholder representations** depending on macOS version (Phase 0 R8 findings):
+
+1. **APFS dataless files** (Sonoma+, our floor) — filename unchanged, `stat` reports full "would-be" size, data extents stripped. **Primary detection signal on macOS 14+.** Check `SF_DATALESS` (`0x40000000`) in `st_flags` via `stat -f%Xf <path>` or `ls -lO`. **Reading a dataless file triggers synchronous iCloud materialization** — looks like a normal read but can stall on flaky networks. Wrapper's read ops get a timeout (15s default) and surface `UNAVAILABLE` on timeout with recovery: "This file is in iCloud but not downloaded yet. Give it a moment and try again, or open it in Finder first."
+
+2. **Legacy `.<name>.icloud` dot-prefix stubs** — pre-Sonoma representation. Still possible on migrated filesystems or via iCloud Drive on iOS-synced content. Detected by filename pattern (dot-prefix + `.icloud` extension). Wrapper's `list` op surfaces these as `{name, type: "placeholder", ...}` with the `.icloud` extension stripped from the reported name.
+
 - **Offline / sync paused** — no special handling; reads return what's on disk, writes succeed locally.
 - **Files > 2 GB** — no streaming support in v1.
+- **`brctl download`** — Apple-internal, undocumented; we don't depend on it. Users materialize missing files via Finder.
 
 ### Helper binary missing or corrupted
 
@@ -605,15 +631,15 @@ Cross-cutting mechanism (schema field, drift-check script, author nudges, CI enf
   "attributions": [
     {
       "name": "iMCP",
-      "url": "https://github.com/loopwork/iMCP",
-      "license": "Apache-2.0",
-      "scope": "Swift service modules (Calendar, Reminders, Contacts) compiled into bin/apple-helper"
+      "url": "https://github.com/mattt/iMCP",
+      "license": "MIT",
+      "scope": "Reference patterns for EventKit + Contacts service implementations (bin/apple-helper is original code, not vendored from iMCP)"
     },
     {
       "name": "apple-mcp",
-      "url": "https://github.com/Dhravya/apple-mcp",
+      "url": "https://github.com/supermemoryai/apple-mcp",
       "license": "MIT",
-      "scope": "AppleScript snippets for Notes and Mail"
+      "scope": "AppleScript snippets for Notes and Mail (extracted from TypeScript sources)"
     },
     {
       "name": "Reminders-CLI",
@@ -633,9 +659,7 @@ At `wecoded-marketplace/apple-services/VENDORED.md`:
 
 | File | Source repo | Upstream path | SHA pulled | License | Last pulled |
 |---|---|---|---|---|---|
-| `bin/apple-helper` (universal Mach-O, built from `itsdestin/apple-helper` Swift sources; service modules vendored from `loopwork/iMCP`) | `loopwork/iMCP` | `Sources/iMCPServer/Services/{Calendar,Reminders,Contacts}Service.swift` | *filled Phase 1* | Apache-2.0 | 2026-04-17 |
-
-*Note: Swift sources live in the sibling `itsdestin/apple-helper` dev repo. The marketplace plugin tree ships only the prebuilt binary; attribution and SHA tracking follow the binary into this repo. `itsdestin/apple-helper/VENDORED.md` tracks the upstream file-level SHAs for the iMCP modules that compose the binary.*
+*Note: `bin/apple-helper` is a universal Mach-O built from original Swift in the sibling `itsdestin/apple-helper` dev repo. iMCP is credited in `NOTICE.md` as reference-only (patterns informed our EventKit/Contacts implementations) — no files are copied byte-for-byte. The Dhravya AppleScript source files below are the only actually-vendored code.*
 | `applescript/notes/*.applescript` | `Dhravya/apple-mcp` | *paths confirmed by Phase 0 R4* | *filled Phase 1* | MIT | 2026-04-17 |
 | `applescript/mail/*.applescript` | `Dhravya/apple-mcp` | *paths confirmed by Phase 0 R4* | *filled Phase 1* | MIT | 2026-04-17 |
 

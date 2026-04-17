@@ -9,11 +9,23 @@
 **Tech Stack:** Swift 5.9+, ArgumentParser (`apple/swift-argument-parser`), EventKit, Contacts framework, AppleScript (`osascript`), bash, shellcheck, GitHub Actions.
 
 **Prerequisites (read before starting):**
-- Design spec: `docs/superpowers/specs/2026-04-17-apple-services-design.md`
+- Design spec: `docs/superpowers/specs/2026-04-17-apple-services-design.md` (revised post-Phase-0)
+- Phase 0 research findings: `docs/superpowers/plans/research/2026-04-17-apple-*.md` (9 files)
 - macOS 14+ host for local verification (Phases 1, 2, 4 require a Mac)
 - `gh` CLI authenticated to the `itsdestin` org (can create repos + PRs)
 - `swift --version` reporting 5.9+ (for local Swift helper dev)
-- `shellcheck` installed locally (`brew install shellcheck`)
+- `shellcheck` and `jq` installed locally (`brew install shellcheck jq`)
+
+**Phase 0 findings that reshape this plan:**
+- **R1** — iMCP is MIT (not Apache-2.0); `mattt/iMCP` not `loopwork/iMCP`. License-text references below use MIT.
+- **R2** — iMCP is an Xcode project, not SwiftPM. Only 9 of 23 ops are covered by its exposed methods. Our strategy is **iMCP-as-reference**: we write EventKit/Contacts calls directly in `Sources/AppleHelper/*.swift`, crediting iMCP in NOTICE.md for patterns we learned from. No `Sources/FromIMCP/` directory is created.
+- **R4** — Dhravya AppleScript is embedded in TypeScript (`utils/notes.ts`, `utils/mail.ts`). Extraction = manual. Several list-returning paths return empty arrays upstream — we rewrite those using **JXA** (JavaScript for Automation) which emits real JSON.
+- **R6** — CI output path is `.build/apple/Products/Release/<product>`, not `.build/release/`. Matrix + lipo not needed; single `swift build --arch arm64 --arch x86_64` produces the universal Mach-O.
+- **R7** — Better Mail first-run probe: `tell application "Mail" to count every account`.
+- **R8** — iCloud placeholders on Sonoma+ are APFS dataless files. Detect via `SF_DATALESS` flag (`0x40000000`) in `st_flags`, not filename.
+- **R3** — TCC re-prompts on ad-hoc-signed binary hash change are likely unavoidable; documented as known friction. Automation TCC attributes to the parent process — **the YouCoded desktop Electron app must carry `NSAppleEventsUsageDescription` + usage-description keys for Calendar/Reminders/Contacts in its Info.plist**. That's a separate PR against `youcoded/desktop/`, noted in Task 30.
+
+**Revised time budget:** Phase 1 expands by ~2 days (write 14 ops from scratch on EventKit/Contacts instead of thin wrappers over iMCP). Phase 2 Task 13/14 expands by ~1-2 days (AppleScript extraction + JXA rewrites).
 
 **Execution pacing:**
 - Phase 0 is research — 1 orchestration task dispatching 9 parallel subagents.
@@ -245,12 +257,11 @@ Tag `apple-helper-vX.Y.Z`. CI builds a universal (arm64+x86_64) Mach-O, ad-hoc s
 
 ## Source layout
 
-- `Sources/AppleHelper/` — CLI entry, arg parsing, JSON output, error envelope (original code)
-- `Sources/FromIMCP/` — vendored service modules from `loopwork/iMCP` (Apache-2.0). See `VENDORED.md`.
+- `Sources/AppleHelper/` — CLI entry, arg parsing, JSON output, error envelope, EventKit/Contacts ops (all original code)
 
 ## License
 
-MIT for original code. Vendored iMCP modules remain under Apache-2.0 — see `NOTICE.md`.
+MIT. Patterns inspired by `mattt/iMCP` (also MIT) are credited in `NOTICE.md` — no iMCP code is vendored byte-for-byte.
 ```
 
 - [ ] **Step 5: Commit**
@@ -291,9 +302,7 @@ let package = Package(
             name: "AppleHelper",
             dependencies: [
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
-                "FromIMCP",
             ],
-            resources: [.copy("../../Resources/Info.plist")],
             linkerSettings: [
                 // Embed Info.plist in the binary so CFBundleDisplayName
                 // controls the TCC dialog label.
@@ -305,7 +314,6 @@ let package = Package(
                 ]),
             ]
         ),
-        .target(name: "FromIMCP", path: "Sources/FromIMCP"),
         .testTarget(
             name: "AppleHelperTests",
             dependencies: ["AppleHelper"]
@@ -660,170 +668,110 @@ git commit -m "feat: JSON output + error envelope with TCC_DENIED marker"
 
 ---
 
-### Task 4: Vendor iMCP service modules
+### Task 4: Clone iMCP as reference + write NOTICE/VENDORED scaffolds
 
 **Files:**
-- Create: `Sources/FromIMCP/CalendarService.swift` (from upstream)
-- Create: `Sources/FromIMCP/RemindersService.swift` (from upstream)
-- Create: `Sources/FromIMCP/ContactsService.swift` (from upstream)
-- Create: `Sources/FromIMCP/README.md`
-- Create: `VENDORED.md`
-- Create: `NOTICE.md`
+- Create: `NOTICE.md` (repo root)
+- Create: `VENDORED.md` (repo root — initially documents only the Dhravya AppleScript extracts that land later in Phase 2; iMCP is reference-only and appears in NOTICE.md only)
+- Create: local reference clone at `~/reference/iMCP/` (outside repo)
 
-Informed by Phase 0 R2 findings (file paths + SHAs confirmed there).
+**Rationale (Phase 0 R2 finding):** iMCP is an Xcode project, not SwiftPM, and its services are tightly coupled to in-repo `Tool`/`Value`/`Ontology`/`JSONSchema` types. Vendoring byte-for-byte isn't worth the decoupling work. Instead we keep iMCP locally as reading reference while we write EventKit/Contacts calls directly in Tasks 5-7.
 
-- [ ] **Step 1: Pull iMCP at confirmed SHA**
+- [ ] **Step 1: Clone iMCP locally at the SHA from R2**
 
 ```bash
-cd /tmp
-git clone https://github.com/loopwork/iMCP.git imcp-upstream
-cd imcp-upstream
-git checkout $(cat /c/Users/desti/youcoded-dev/docs/superpowers/plans/research/2026-04-17-apple-imcp-audit.md | grep -oE 'SHA [a-f0-9]+' | head -1 | cut -d' ' -f2)
+mkdir -p ~/reference
+cd ~/reference
+git clone https://github.com/mattt/iMCP.git
+cd iMCP
+# SHA captured in Phase 0 R2 findings:
+VENDOR_SHA="6d0df253cd31d485edaede4929dc3e92d5825cab"
+git checkout "$VENDOR_SHA"
+echo "Reading iMCP at $VENDOR_SHA"
 ```
 
-If R2 findings indicate a specific tag, use that instead:
-```bash
-git checkout <tag from R2>
-```
-
-Record the SHA — you'll need it in `VENDORED.md`.
-
-- [ ] **Step 2: Copy the three service modules**
+- [ ] **Step 2: Spot-check that the expected service files are present**
 
 ```bash
-VENDOR_SHA=$(git rev-parse HEAD)
-TARGET=/c/Users/desti/apple-helper/Sources/FromIMCP
-mkdir -p "$TARGET"
-
-# Exact paths confirmed by R2:
-cp Sources/iMCPServer/Services/CalendarService.swift "$TARGET/CalendarService.swift"
-cp Sources/iMCPServer/Services/RemindersService.swift "$TARGET/RemindersService.swift"
-cp Sources/iMCPServer/Services/ContactsService.swift "$TARGET/ContactsService.swift"
-cp LICENSE "$TARGET/../../NOTICE.iMCP.LICENSE"
-echo "$VENDOR_SHA" > "$TARGET/UPSTREAM_SHA"
+ls App/Services/{Calendar,Reminders,Contacts}.swift
+head -20 App/Services/Calendar.swift
 ```
 
-- [ ] **Step 3: Strip MCP-server scaffolding from vendored files**
+Expected: all three files exist. If paths differ from R2, adjust when reading — the tasks below refer to these files but don't copy them.
 
-Inspect each vendored file. Remove:
-- `import MCP` and any MCP-specific protocol conformances
-- Functions that wrap the service in an MCP tool-registration shape
-- Any `@MainActor` or other scaffolding only needed for the menu-bar app
+- [ ] **Step 3: Write VENDORED.md at the apple-helper repo root**
 
-Keep:
-- Service struct/class with EventKit/Contacts calls
-- Data model structs (CalendarEvent, Reminder, Contact equivalents)
-- Error types (map to our `HelperError` in the CLI adapter layer, not here)
-
-If R2 findings indicate the modules are tightly coupled to iMCP infrastructure and can't be stripped cleanly, instead copy them verbatim and add an extension file `Sources/FromIMCP/ServiceAdapter.swift` that bridges them to our CLI. Document the choice in `Sources/FromIMCP/README.md`.
-
-- [ ] **Step 4: Write Sources/FromIMCP/README.md**
-
-```markdown
-# FromIMCP — vendored service modules
-
-The three files in this directory (`CalendarService.swift`, `RemindersService.swift`, `ContactsService.swift`) are vendored from `loopwork/iMCP` at SHA `$VENDOR_SHA` (see `UPSTREAM_SHA`).
-
-## Why vendor instead of depend
-
-iMCP ships as a menu-bar app with an MCP server, not as a reusable SwiftPM library. The service modules are the useful part; everything else (MCP protocol, menu-bar UI, per-service configuration) is overhead for our CLI use case.
-
-## Adaptation rules
-
-- **Do not modify the service modules directly.** Changes to vendored files make future pulls harder to merge.
-- **Bridging code belongs outside this directory.** Any CLI-specific wiring (JSON encoding, error mapping, arg parsing) lives in `Sources/AppleHelper/` and calls into these modules.
-- **When re-pulling from upstream**, update `UPSTREAM_SHA` + `VENDORED.md` + the `Last pulled` row.
-
-## License
-
-Apache-2.0. See `../../NOTICE.iMCP.LICENSE`.
+```bash
+cd /c/Users/desti/apple-helper
 ```
-
-- [ ] **Step 5: Write VENDORED.md at repo root**
 
 ```markdown
 # VENDORED.md
 
-Provenance for files pulled from third-party sources. Updated on every vendor refresh.
+Provenance for code copied byte-for-byte from third-party sources.
 
-| File | Source repo | Upstream path | SHA | License | Last pulled |
-|---|---|---|---|---|---|
-| `Sources/FromIMCP/CalendarService.swift` | loopwork/iMCP | `Sources/iMCPServer/Services/CalendarService.swift` | [SHA from Step 1] | Apache-2.0 | 2026-04-17 |
-| `Sources/FromIMCP/RemindersService.swift` | loopwork/iMCP | `Sources/iMCPServer/Services/RemindersService.swift` | [SHA from Step 1] | Apache-2.0 | 2026-04-17 |
-| `Sources/FromIMCP/ContactsService.swift` | loopwork/iMCP | `Sources/iMCPServer/Services/ContactsService.swift` | [SHA from Step 1] | Apache-2.0 | 2026-04-17 |
+This repo contains **no** byte-for-byte vendored code. iMCP, our primary reference, is credited in `NOTICE.md` as reference-only — we read its patterns for EventKit/Contacts usage and implement our own code in `Sources/AppleHelper/`. The marketplace plugin at `wecoded-marketplace/apple-services/` vendors AppleScript extracted from `supermemoryai/apple-mcp`; that repo's `VENDORED.md` tracks those files.
+
+See `NOTICE.md` for third-party attribution.
 ```
 
-- [ ] **Step 6: Write NOTICE.md**
+- [ ] **Step 4: Write NOTICE.md**
 
 ```markdown
 # NOTICE.md
 
-`apple-helper` includes code from the following third-party sources. Original license texts are reproduced in full below.
+`apple-helper` is MIT-licensed. It was built with reference to the following third-party Open Source projects. License texts are reproduced in full for attribution.
 
 ---
 
-## iMCP (Apache-2.0)
+## iMCP (MIT)
 
-Source: https://github.com/loopwork/iMCP
+Source: https://github.com/mattt/iMCP
+Audited SHA: `6d0df253cd31d485edaede4929dc3e92d5825cab` (2026-01-30)
 
-[Paste the full Apache-2.0 license text from iMCP's LICENSE file]
+Our EventKit and Contacts implementations in `Sources/AppleHelper/` draw on patterns we learned reading iMCP's `App/Services/{Calendar,Reminders,Contacts}.swift` files, its `App/Extensions/EventKit+Extensions.swift`, and related types. No files are copied byte-for-byte; implementations target a different CLI shape and cover ops iMCP does not expose. iMCP is credited here because the reference meaningfully shaped our code.
+
+iMCP's license in full:
+
+```
+MIT License
+
+Copyright (c) 2025 Mattt (https://mat.tt)
+
+[... paste the full MIT text from ~/reference/iMCP/LICENSE.md ...]
+```
 ```
 
-- [ ] **Step 7: Verify it still builds**
+**Fill in the bracketed section:** open `~/reference/iMCP/LICENSE.md` and paste its full contents in place of the `[... paste ...]` line.
+
+- [ ] **Step 5: Commit**
 
 ```bash
-swift build
-```
-
-Expected: success. If compilation errors (missing types from stripped scaffolding), adjust Step 3 minimally and re-try.
-
-- [ ] **Step 8: Commit**
-
-```bash
-git add Sources/FromIMCP/ VENDORED.md NOTICE.md NOTICE.iMCP.LICENSE
-git commit -m "vendor: iMCP CalendarService/RemindersService/ContactsService @ $VENDOR_SHA"
+git add NOTICE.md VENDORED.md
+git commit -m "docs: NOTICE.md (iMCP MIT reference) + VENDORED.md scaffold"
 ```
 
 ---
 
-### Task 5: Wire Calendar ops (8 ops)
+### Task 5: Wire Calendar ops directly on EventKit (8 ops)
 
 **Files:**
 - Create: `Sources/AppleHelper/CalendarCommands.swift` (replaces placeholder from Task 2)
 - Modify: `Sources/AppleHelper/RootCommand.swift` — remove placeholder `CalendarCommand`
 
-The 8 ops and their contracts come from the spec's `apple-calendar` table. Each op: parse args → call `CalendarService` method → encode output → print.
+The 8 ops come from the spec's `apple-calendar` table. Per Phase 0 R2, iMCP only exposes ~3 of these (list, fetch, create) and with different shapes than we want; we call EventKit directly. `~/reference/iMCP/App/Services/Calendar.swift` and `~/reference/iMCP/App/Extensions/EventKit+Extensions.swift` are useful references for date handling + recurrence mapping — read them while implementing.
 
-- [ ] **Step 1: Inspect CalendarService's public surface**
+- [ ] **Step 1: Delete placeholder from RootCommand.swift**
 
-```bash
-grep -nE "func |public |struct " Sources/FromIMCP/CalendarService.swift | head -60
-```
+Open `Sources/AppleHelper/RootCommand.swift` and delete the entire `struct CalendarCommand: ParsableCommand { ... }` block (keep the entry in the `subcommands:` array — the full `CalendarCommand` is defined in `CalendarCommands.swift` below).
 
-Note the available method signatures. Per R2 findings the methods should approximately match:
-- `listCalendars()` → `[EKCalendar]`
-- `listEvents(from:to:calendarId:)` → `[EKEvent]`
-- `getEvent(id:)` → `EKEvent?`
-- `searchEvents(query:from:to:)` → `[EKEvent]`
-- `createEvent(...)` → `EKEvent`
-- `updateEvent(id:...)` → `EKEvent`
-- `deleteEvent(id:)` → `Void`
-- `freeBusy(from:to:calendarIds:)` → `[(start: Date, end: Date, busy: Bool)]`
-
-If the actual surface diverges, adjust the switch-case below to match the real method names. Do NOT modify `CalendarService.swift` itself.
-
-- [ ] **Step 2: Delete placeholder from RootCommand.swift**
-
-Open `Sources/AppleHelper/RootCommand.swift` and delete the entire `struct CalendarCommand: ParsableCommand { ... }` block (keep it in the subcommands array — it's redefined below).
-
-- [ ] **Step 3: Write CalendarCommands.swift**
+- [ ] **Step 2: Write CalendarCommands.swift**
 
 ```swift
 // Sources/AppleHelper/CalendarCommands.swift
 import ArgumentParser
 import EventKit
 import Foundation
-import FromIMCP
 
 struct CalendarCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
@@ -834,7 +782,6 @@ struct CalendarCommand: ParsableCommand {
     @Argument(help: "Operation name. One of: list_calendars, list_events, get_event, search_events, create_event, update_event, delete_event, free_busy.")
     var op: String
 
-    // Common optional args. ArgumentParser lets unknown flags pass through to the op switch.
     @Option(name: .long) var from: String?
     @Option(name: .long) var to: String?
     @Option(name: .long) var calendarId: String?
@@ -850,11 +797,11 @@ struct CalendarCommand: ParsableCommand {
     @Option(name: .long) var query: String?
 
     mutating func run() throws {
-        let service = CalendarService()
+        let store = EKEventStore()
         do {
             switch op {
             case "list_calendars":
-                let cals = try service.listCalendars()
+                let cals = store.calendars(for: .event)
                 let json = cals.map { cal in
                     [
                         "id": cal.calendarIdentifier,
@@ -866,15 +813,20 @@ struct CalendarCommand: ParsableCommand {
                 print(JSON.encode(json))
 
             case "list_events":
-                guard let fromStr = from, let toStr = to else { throw HelperError.invalidArg(service: "calendar", message: "list_events requires --from and --to") }
+                guard let fromStr = from, let toStr = to else {
+                    throw HelperError.invalidArg(service: "calendar", message: "list_events requires --from and --to")
+                }
                 let fromDate = try parseDate(fromStr, arg: "from")
                 let toDate = try parseDate(toStr, arg: "to")
-                let events = try service.listEvents(from: fromDate, to: toDate, calendarId: calendarId)
+                let cals = calendarId.flatMap { cid in store.calendars(for: .event).filter { $0.calendarIdentifier == cid } }
+                let predicate = store.predicateForEvents(withStart: fromDate, end: toDate, calendars: cals)
+                let events = store.events(matching: predicate)
                 print(JSON.encode(events.map(eventToDict)))
 
             case "get_event":
                 guard let id = id else { throw HelperError.invalidArg(service: "calendar", message: "get_event requires --id") }
-                guard let event = try service.getEvent(id: id) else {
+                // calendarItem(withIdentifier:) works for both events and reminders.
+                guard let event = store.calendarItem(withIdentifier: id) as? EKEvent else {
                     throw HelperError.notFound(service: "calendar", message: "No event with id \(id)")
                 }
                 print(JSON.encode(eventToDict(event)))
@@ -883,7 +835,15 @@ struct CalendarCommand: ParsableCommand {
                 guard let q = query, let fromStr = from, let toStr = to else {
                     throw HelperError.invalidArg(service: "calendar", message: "search_events requires --query --from --to")
                 }
-                let events = try service.searchEvents(query: q, from: parseDate(fromStr, arg: "from"), to: parseDate(toStr, arg: "to"))
+                let fromDate = try parseDate(fromStr, arg: "from")
+                let toDate = try parseDate(toStr, arg: "to")
+                let predicate = store.predicateForEvents(withStart: fromDate, end: toDate, calendars: nil)
+                let needle = q.lowercased()
+                let events = store.events(matching: predicate).filter { event in
+                    (event.title ?? "").lowercased().contains(needle) ||
+                    (event.notes ?? "").lowercased().contains(needle) ||
+                    (event.location ?? "").lowercased().contains(needle)
+                }
                 print(JSON.encode(events.map(eventToDict)))
 
             case "create_event":
@@ -895,35 +855,63 @@ struct CalendarCommand: ParsableCommand {
                 guard endDate >= startDate else {
                     throw HelperError.invalidArg(service: "calendar", message: "end must be >= start")
                 }
-                let event = try service.createEvent(
-                    title: title, start: startDate, end: endDate,
-                    calendarId: calId, location: location, notes: notes,
-                    recurrence: recurrence, allDay: allDay
-                )
+                guard let cal = store.calendars(for: .event).first(where: { $0.calendarIdentifier == calId }) else {
+                    throw HelperError.notFound(service: "calendar", message: "No calendar with id \(calId)")
+                }
+                let event = EKEvent(eventStore: store)
+                event.calendar = cal
+                event.title = title
+                event.startDate = startDate
+                event.endDate = endDate
+                event.isAllDay = allDay
+                if let loc = location { event.location = loc }
+                if let n = notes { event.notes = n }
+                if let rule = recurrence { event.recurrenceRules = [try parseRecurrence(rule)] }
+                try store.save(event, span: .thisEvent, commit: true)
                 print(JSON.encode(eventToDict(event)))
 
             case "update_event":
                 guard let id = id else { throw HelperError.invalidArg(service: "calendar", message: "update_event requires --id") }
-                let event = try service.updateEvent(
-                    id: id, title: title,
-                    start: start.flatMap { try? parseDate($0, arg: "start") },
-                    end: end.flatMap { try? parseDate($0, arg: "end") },
-                    calendarId: calendarId, location: location, notes: notes,
-                    recurrence: recurrence, allDay: allDay
-                )
+                guard let event = store.calendarItem(withIdentifier: id) as? EKEvent else {
+                    throw HelperError.notFound(service: "calendar", message: "No event with id \(id)")
+                }
+                if let t = title { event.title = t }
+                if let s = start { event.startDate = try parseDate(s, arg: "start") }
+                if let e = end { event.endDate = try parseDate(e, arg: "end") }
+                if let loc = location { event.location = loc }
+                if let n = notes { event.notes = n }
+                if let calId = calendarId, let cal = store.calendars(for: .event).first(where: { $0.calendarIdentifier == calId }) {
+                    event.calendar = cal
+                }
+                if let rule = recurrence { event.recurrenceRules = [try parseRecurrence(rule)] }
+                try store.save(event, span: .thisEvent, commit: true)
                 print(JSON.encode(eventToDict(event)))
 
             case "delete_event":
                 guard let id = id else { throw HelperError.invalidArg(service: "calendar", message: "delete_event requires --id") }
-                try service.deleteEvent(id: id)
+                guard let event = store.calendarItem(withIdentifier: id) as? EKEvent else {
+                    throw HelperError.notFound(service: "calendar", message: "No event with id \(id)")
+                }
+                try store.remove(event, span: .thisEvent, commit: true)
                 print(#"{"ok":true}"#)
 
             case "free_busy":
-                guard let fromStr = from, let toStr = to else { throw HelperError.invalidArg(service: "calendar", message: "free_busy requires --from --to") }
-                let calIds = calendarIds?.split(separator: ",").map(String.init)
-                let slots = try service.freeBusy(from: parseDate(fromStr, arg: "from"), to: parseDate(toStr, arg: "to"), calendarIds: calIds)
-                let json = slots.map { ["start": $0.start, "end": $0.end, "busy": $0.busy] as [String: Any] }
-                print(JSON.encode(json))
+                guard let fromStr = from, let toStr = to else {
+                    throw HelperError.invalidArg(service: "calendar", message: "free_busy requires --from --to")
+                }
+                let fromDate = try parseDate(fromStr, arg: "from")
+                let toDate = try parseDate(toStr, arg: "to")
+                let cals = calendarIds?.split(separator: ",").compactMap { cid in
+                    store.calendars(for: .event).first(where: { $0.calendarIdentifier == String(cid) })
+                }
+                let predicate = store.predicateForEvents(withStart: fromDate, end: toDate, calendars: cals)
+                let events = store.events(matching: predicate)
+                // Collapse into busy windows: each event becomes one {start, end, busy: true}.
+                // Gaps are implicit (free). Consumers can merge overlaps if they care.
+                let slots = events
+                    .sorted { $0.startDate < $1.startDate }
+                    .map { ["start": $0.startDate, "end": $0.endDate, "busy": true] as [String: Any] }
+                print(JSON.encode(slots))
 
             default:
                 throw HelperError.invalidArg(service: "calendar", message: "Unknown op: \(op)")
@@ -938,13 +926,36 @@ struct CalendarCommand: ParsableCommand {
     }
 
     private func parseDate(_ s: String, arg: String) throws -> Date {
-        // Accept ISO-8601 with or without timezone. yyyy-MM-dd acceptable for date-only.
         if let d = JSON.iso8601.date(from: s) { return d }
+        let withTz = DateFormatter()
+        withTz.dateFormat = "yyyy-MM-dd'T'HH:mm"
+        withTz.timeZone = .current
+        if let d = withTz.date(from: s) { return d }
         let dateOnly = DateFormatter()
         dateOnly.dateFormat = "yyyy-MM-dd"
         dateOnly.timeZone = .current
         if let d = dateOnly.date(from: s) { return d }
         throw HelperError.invalidArg(service: "calendar", message: "Invalid date for --\(arg): \(s) (expected ISO-8601 or yyyy-MM-dd)")
+    }
+
+    /// v1 recurrence support: accept a tiny DSL — one of
+    ///   "daily", "weekly", "monthly", "yearly"
+    /// plus optional interval suffix like "weekly:2" (every 2 weeks).
+    /// Richer rules (BYDAY etc.) are out of scope for v1.
+    private func parseRecurrence(_ rule: String) throws -> EKRecurrenceRule {
+        let parts = rule.split(separator: ":")
+        let freqStr = String(parts[0]).lowercased()
+        let interval = parts.count > 1 ? Int(parts[1]) ?? 1 : 1
+        let freq: EKRecurrenceFrequency
+        switch freqStr {
+        case "daily":   freq = .daily
+        case "weekly":  freq = .weekly
+        case "monthly": freq = .monthly
+        case "yearly":  freq = .yearly
+        default:
+            throw HelperError.invalidArg(service: "calendar", message: "Unknown recurrence: \(rule). Supported: daily|weekly|monthly|yearly, optional :N interval.")
+        }
+        return EKRecurrenceRule(recurrenceWith: freq, interval: interval, end: nil)
     }
 
     private func eventToDict(_ e: EKEvent) -> [String: Any] {
@@ -975,42 +986,40 @@ extension JSON {
 }
 ```
 
-- [ ] **Step 4: Verify it builds**
+- [ ] **Step 3: Verify it builds**
 
 ```bash
 swift build
 ```
 
-Expected: success. If errors about `CalendarService` methods not existing, revisit Step 1 — the real method signatures may differ from the expected surface.
+Expected: success.
 
-- [ ] **Step 5: Smoke-test against a live calendar (macOS only)**
+- [ ] **Step 4: Smoke-test against a live calendar (macOS only)**
 
 ```bash
 .build/debug/apple-helper calendar list_calendars
 ```
 
-Expected on first run: macOS pops the Calendar permission dialog. Click Allow. Then JSON array of calendars prints.
+Expected first run: Calendar permission dialog. Click Allow. Then JSON array of calendars.
 
-Expected on subsequent runs: immediate JSON output, no dialog.
+Expected subsequent runs: immediate JSON output, no dialog.
 
-If prompt doesn't appear, TCC was already granted — check System Settings → Privacy & Security → Calendars.
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add Sources/AppleHelper/CalendarCommands.swift Sources/AppleHelper/RootCommand.swift
-git commit -m "feat: wire Calendar ops (8 ops) to CalendarService"
+git commit -m "feat: Calendar ops (8) on EventKit directly"
 ```
 
 ---
 
-### Task 6: Wire Reminders ops (7 ops)
+### Task 6: Wire Reminders ops directly on EventKit (7 ops)
 
 **Files:**
 - Create: `Sources/AppleHelper/RemindersCommands.swift` (replaces placeholder)
 - Modify: `Sources/AppleHelper/RootCommand.swift` — remove placeholder `RemindersCommand`
 
-Contract from spec's `apple-reminders` table: `list_lists`, `list_reminders`, `get_reminder`, `create_reminder`, `update_reminder`, `complete_reminder`, `delete_reminder`.
+Ops: `list_lists`, `list_reminders`, `get_reminder`, `create_reminder`, `update_reminder`, `complete_reminder`, `delete_reminder`. EventKit reminders API needs async `fetchReminders(matching:)` which we bridge to sync via a semaphore (EventKit has no sync query API for reminders — this is the one awkward part).
 
 - [ ] **Step 1: Delete the placeholder in RootCommand.swift**
 
@@ -1023,7 +1032,6 @@ Remove the `struct RemindersCommand: ParsableCommand { ... }` block.
 import ArgumentParser
 import EventKit
 import Foundation
-import FromIMCP
 
 struct RemindersCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
@@ -1043,11 +1051,11 @@ struct RemindersCommand: ParsableCommand {
     @Flag(name: .long) var incompleteOnly: Bool = false
 
     mutating func run() throws {
-        let service = RemindersService()
+        let store = EKEventStore()
         do {
             switch op {
             case "list_lists":
-                let lists = try service.listLists()
+                let lists = store.calendars(for: .reminder)
                 let json = lists.map { l in
                     [
                         "id": l.calendarIdentifier,
@@ -1058,38 +1066,65 @@ struct RemindersCommand: ParsableCommand {
                 print(JSON.encode(json))
 
             case "list_reminders":
-                let reminders = try service.listReminders(listId: listId, incompleteOnly: incompleteOnly)
+                let cals = listId.flatMap { lid in store.calendars(for: .reminder).filter { $0.calendarIdentifier == lid } }
+                let predicate = incompleteOnly
+                    ? store.predicateForIncompleteReminders(withDueDateStarting: nil, ending: nil, calendars: cals)
+                    : store.predicateForReminders(in: cals)
+                let reminders = try fetchReminders(store: store, predicate: predicate)
                 print(JSON.encode(reminders.map(reminderToDict)))
 
             case "get_reminder":
                 guard let id = id else { throw HelperError.invalidArg(service: "reminders", message: "get_reminder requires --id") }
-                guard let r = try service.getReminder(id: id) else {
+                guard let r = store.calendarItem(withIdentifier: id) as? EKReminder else {
                     throw HelperError.notFound(service: "reminders", message: "No reminder with id \(id)")
                 }
                 print(JSON.encode(reminderToDict(r)))
 
             case "create_reminder":
-                guard let title = title, let listId = listId else {
+                guard let title = title, let lid = listId else {
                     throw HelperError.invalidArg(service: "reminders", message: "create_reminder requires --title --list-id")
                 }
-                let dueDate = try due.map { try parseDate($0) }
-                let r = try service.createReminder(title: title, listId: listId, due: dueDate, priority: priority, notes: notes)
+                guard let cal = store.calendars(for: .reminder).first(where: { $0.calendarIdentifier == lid }) else {
+                    throw HelperError.notFound(service: "reminders", message: "No list with id \(lid)")
+                }
+                let r = EKReminder(eventStore: store)
+                r.calendar = cal
+                r.title = title
+                if let d = due {
+                    r.dueDateComponents = try dateComponents(from: parseDate(d))
+                }
+                if let p = priority { r.priority = p }
+                if let n = notes { r.notes = n }
+                try store.save(r, commit: true)
                 print(JSON.encode(reminderToDict(r)))
 
             case "update_reminder":
                 guard let id = id else { throw HelperError.invalidArg(service: "reminders", message: "update_reminder requires --id") }
-                let dueDate = try due.map { try parseDate($0) }
-                let r = try service.updateReminder(id: id, title: title, due: dueDate, priority: priority, notes: notes)
+                guard let r = store.calendarItem(withIdentifier: id) as? EKReminder else {
+                    throw HelperError.notFound(service: "reminders", message: "No reminder with id \(id)")
+                }
+                if let t = title { r.title = t }
+                if let d = due { r.dueDateComponents = try dateComponents(from: parseDate(d)) }
+                if let p = priority { r.priority = p }
+                if let n = notes { r.notes = n }
+                try store.save(r, commit: true)
                 print(JSON.encode(reminderToDict(r)))
 
             case "complete_reminder":
                 guard let id = id else { throw HelperError.invalidArg(service: "reminders", message: "complete_reminder requires --id") }
-                try service.completeReminder(id: id)
+                guard let r = store.calendarItem(withIdentifier: id) as? EKReminder else {
+                    throw HelperError.notFound(service: "reminders", message: "No reminder with id \(id)")
+                }
+                r.isCompleted = true
+                try store.save(r, commit: true)
                 print(#"{"ok":true}"#)
 
             case "delete_reminder":
                 guard let id = id else { throw HelperError.invalidArg(service: "reminders", message: "delete_reminder requires --id") }
-                try service.deleteReminder(id: id)
+                guard let r = store.calendarItem(withIdentifier: id) as? EKReminder else {
+                    throw HelperError.notFound(service: "reminders", message: "No reminder with id \(id)")
+                }
+                try store.remove(r, commit: true)
                 print(#"{"ok":true}"#)
 
             default:
@@ -1104,6 +1139,19 @@ struct RemindersCommand: ParsableCommand {
         }
     }
 
+    /// EventKit's reminder query is async-only. Bridge to sync via a semaphore
+    /// so the CLI op model stays "one invocation = one blocking call".
+    private func fetchReminders(store: EKEventStore, predicate: NSPredicate) throws -> [EKReminder] {
+        let sem = DispatchSemaphore(value: 0)
+        var result: [EKReminder] = []
+        store.fetchReminders(matching: predicate) { reminders in
+            result = reminders ?? []
+            sem.signal()
+        }
+        _ = sem.wait(timeout: .now() + 10)
+        return result
+    }
+
     private func parseDate(_ s: String) throws -> Date {
         if let d = JSON.iso8601.date(from: s) { return d }
         let f = DateFormatter()
@@ -1115,6 +1163,11 @@ struct RemindersCommand: ParsableCommand {
         dateOnly.timeZone = .current
         if let d = dateOnly.date(from: s) { return d }
         throw HelperError.invalidArg(service: "reminders", message: "Invalid date: \(s)")
+    }
+
+    private func dateComponents(from date: Date) throws -> DateComponents {
+        let cal = Calendar.current
+        return cal.dateComponents([.year, .month, .day, .hour, .minute], from: date)
     }
 
     private func reminderToDict(_ r: EKReminder) -> [String: Any] {
@@ -1148,27 +1201,26 @@ Expected: permission dialog on first run; JSON array on subsequent.
 
 ```bash
 git add Sources/AppleHelper/RemindersCommands.swift Sources/AppleHelper/RootCommand.swift
-git commit -m "feat: wire Reminders ops (7 ops)"
+git commit -m "feat: Reminders ops (7) on EventKit directly"
 ```
 
 ---
 
-### Task 7: Wire Contacts ops (8 ops)
+### Task 7: Wire Contacts ops directly on Contacts framework (8 ops)
 
 **Files:**
 - Create: `Sources/AppleHelper/ContactsCommands.swift` (replaces placeholder)
 - Modify: `Sources/AppleHelper/RootCommand.swift` — remove placeholder `ContactsCommand`
 
-Ops: `search`, `get`, `list_groups`, `list_group_members`, `create`, `update`, `add_to_group`, `remove_from_group`.
+Ops: `search`, `get`, `list_groups`, `list_group_members`, `create`, `update`, `add_to_group`, `remove_from_group`. Contacts framework is sync; no async bridging needed.
 
-- [ ] **Step 1: Delete the placeholder + write ContactsCommands.swift**
+- [ ] **Step 1: Delete the placeholder in RootCommand.swift + write ContactsCommands.swift**
 
 ```swift
 // Sources/AppleHelper/ContactsCommands.swift
 import ArgumentParser
 import Contacts
 import Foundation
-import FromIMCP
 
 struct ContactsCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
@@ -1191,53 +1243,128 @@ struct ContactsCommand: ParsableCommand {
     @Option(name: [.customLong("emails")], parsing: .upToNextOption) var emails: [String] = []
     @Option(name: .long) var limit: Int?
 
+    private static let keysToFetch: [CNKeyDescriptor] = [
+        CNContactIdentifierKey as CNKeyDescriptor,
+        CNContactGivenNameKey as CNKeyDescriptor,
+        CNContactFamilyNameKey as CNKeyDescriptor,
+        CNContactOrganizationNameKey as CNKeyDescriptor,
+        CNContactPhoneNumbersKey as CNKeyDescriptor,
+        CNContactEmailAddressesKey as CNKeyDescriptor,
+        CNContactNoteKey as CNKeyDescriptor,
+        CNContactImageDataAvailableKey as CNKeyDescriptor,
+    ]
+
     mutating func run() throws {
-        let service = ContactsService()
+        let store = CNContactStore()
         do {
             switch op {
             case "search":
                 guard let q = query else { throw HelperError.invalidArg(service: "contacts", message: "search requires --query") }
-                let results = try service.search(query: q, limit: limit ?? 50)
-                print(JSON.encode(results.map(contactToDict)))
+                let predicate = CNContact.predicateForContacts(matchingName: q)
+                var results: [CNContact] = []
+                do {
+                    results = try store.unifiedContacts(matching: predicate, keysToFetch: Self.keysToFetch)
+                } catch {
+                    // Name predicate isn't exhaustive — some matches live in phone/email/org.
+                    // Fall back: enumerate all, filter in memory. Slow but v1-acceptable.
+                    let fetchReq = CNContactFetchRequest(keysToFetch: Self.keysToFetch)
+                    try store.enumerateContacts(with: fetchReq) { contact, _ in
+                        let needle = q.lowercased()
+                        let hay = [contact.givenName, contact.familyName, contact.organizationName,
+                                   contact.phoneNumbers.map { $0.value.stringValue }.joined(separator: " "),
+                                   contact.emailAddresses.map { $0.value as String }.joined(separator: " ")]
+                            .joined(separator: " ").lowercased()
+                        if hay.contains(needle) { results.append(contact) }
+                    }
+                }
+                let cap = limit ?? 50
+                let truncated = Array(results.prefix(cap))
+                print(JSON.encode(truncated.map(contactToDict)))
 
             case "get":
                 guard let id = id else { throw HelperError.invalidArg(service: "contacts", message: "get requires --id") }
-                guard let c = try service.get(id: id) else {
+                do {
+                    let c = try store.unifiedContact(withIdentifier: id, keysToFetch: Self.keysToFetch)
+                    print(JSON.encode(contactToDict(c)))
+                } catch {
                     throw HelperError.notFound(service: "contacts", message: "No contact with id \(id)")
                 }
-                print(JSON.encode(contactToDict(c)))
 
             case "list_groups":
-                let groups = try service.listGroups()
+                let groups = try store.groups(matching: nil)
                 print(JSON.encode(groups.map { ["id": $0.identifier, "name": $0.name] as [String: Any] }))
 
             case "list_group_members":
                 guard let gid = groupId else { throw HelperError.invalidArg(service: "contacts", message: "list_group_members requires --group-id") }
-                let members = try service.listGroupMembers(groupId: gid)
+                let predicate = CNContact.predicateForContactsInGroup(withIdentifier: gid)
+                let members = try store.unifiedContacts(matching: predicate, keysToFetch: Self.keysToFetch)
                 print(JSON.encode(members.map(contactToDict)))
 
             case "create":
                 guard let first = first else { throw HelperError.invalidArg(service: "contacts", message: "create requires --first") }
-                let c = try service.create(first: first, last: last, phones: phones, emails: emails, organization: organization, notes: notes)
-                print(JSON.encode(contactToDict(c)))
+                let c = CNMutableContact()
+                c.givenName = first
+                if let last = last { c.familyName = last }
+                if let org = organization { c.organizationName = org }
+                c.phoneNumbers = phones.map { CNLabeledValue(label: CNLabelPhoneNumberMain, value: CNPhoneNumber(stringValue: $0)) }
+                c.emailAddresses = emails.map { CNLabeledValue(label: CNLabelHome, value: $0 as NSString) }
+                if let n = notes { c.note = n }
+                let req = CNSaveRequest()
+                req.add(c, toContainerWithIdentifier: nil)
+                try store.execute(req)
+                // Re-fetch so identifier is stable + return shape matches `get`.
+                let fetched = try store.unifiedContact(withIdentifier: c.identifier, keysToFetch: Self.keysToFetch)
+                print(JSON.encode(contactToDict(fetched)))
 
             case "update":
                 guard let id = id else { throw HelperError.invalidArg(service: "contacts", message: "update requires --id") }
-                let c = try service.update(id: id, first: first, last: last, phones: phones.isEmpty ? nil : phones, emails: emails.isEmpty ? nil : emails, organization: organization, notes: notes)
-                print(JSON.encode(contactToDict(c)))
+                let existing = try store.unifiedContact(withIdentifier: id, keysToFetch: Self.keysToFetch)
+                // unifiedContact is immutable; need mutable copy from the underlying contact.
+                guard let mutable = existing.mutableCopy() as? CNMutableContact else {
+                    throw HelperError.internalError(service: "contacts", message: "Couldn't obtain mutable copy of \(id)")
+                }
+                if let f = first { mutable.givenName = f }
+                if let l = last { mutable.familyName = l }
+                if let o = organization { mutable.organizationName = o }
+                if !phones.isEmpty {
+                    mutable.phoneNumbers = phones.map { CNLabeledValue(label: CNLabelPhoneNumberMain, value: CNPhoneNumber(stringValue: $0)) }
+                }
+                if !emails.isEmpty {
+                    mutable.emailAddresses = emails.map { CNLabeledValue(label: CNLabelHome, value: $0 as NSString) }
+                }
+                if let n = notes { mutable.note = n }
+                let req = CNSaveRequest()
+                req.update(mutable)
+                try store.execute(req)
+                let refreshed = try store.unifiedContact(withIdentifier: id, keysToFetch: Self.keysToFetch)
+                print(JSON.encode(contactToDict(refreshed)))
 
             case "add_to_group":
                 guard let cid = contactId, let gid = groupId else {
                     throw HelperError.invalidArg(service: "contacts", message: "add_to_group requires --contact-id --group-id")
                 }
-                try service.addToGroup(contactId: cid, groupId: gid)
+                let contact = try store.unifiedContact(withIdentifier: cid, keysToFetch: [CNContactIdentifierKey as CNKeyDescriptor])
+                let groups = try store.groups(matching: CNGroup.predicateForGroups(withIdentifiers: [gid]))
+                guard let group = groups.first else {
+                    throw HelperError.notFound(service: "contacts", message: "No group with id \(gid)")
+                }
+                let req = CNSaveRequest()
+                req.addMember(contact, to: group)
+                try store.execute(req)
                 print(#"{"ok":true}"#)
 
             case "remove_from_group":
                 guard let cid = contactId, let gid = groupId else {
                     throw HelperError.invalidArg(service: "contacts", message: "remove_from_group requires --contact-id --group-id")
                 }
-                try service.removeFromGroup(contactId: cid, groupId: gid)
+                let contact = try store.unifiedContact(withIdentifier: cid, keysToFetch: [CNContactIdentifierKey as CNKeyDescriptor])
+                let groups = try store.groups(matching: CNGroup.predicateForGroups(withIdentifiers: [gid]))
+                guard let group = groups.first else {
+                    throw HelperError.notFound(service: "contacts", message: "No group with id \(gid)")
+                }
+                let req = CNSaveRequest()
+                req.removeMember(contact, from: group)
+                try store.execute(req)
                 print(#"{"ok":true}"#)
 
             default:
@@ -1253,16 +1380,28 @@ struct ContactsCommand: ParsableCommand {
     }
 
     private func contactToDict(_ c: CNContact) -> [String: Any] {
+        let note: String = {
+            // CNContactNoteKey is restricted since macOS 13 — requires entitlement for some apps.
+            // Ad-hoc signed binaries with usage-description may not get notes; fall back to "".
+            if c.isKeyAvailable(CNContactNoteKey) { return (try? c.note) ?? "" }
+            return ""
+        }()
         return [
             "id": c.identifier,
             "first": c.givenName,
             "last": c.familyName,
             "organization": c.organizationName,
-            "phones": c.phoneNumbers.map { ["label": $0.label ?? "", "value": $0.value.stringValue] as [String: Any] },
-            "emails": c.emailAddresses.map { ["label": $0.label ?? "", "value": $0.value as String] as [String: Any] },
-            "notes": (try? c.note) ?? "",
-            "image_data": c.imageData != nil,
+            "phones": c.phoneNumbers.map { ["label": CNLabeledValue<NSString>.localizedString(forLabel: $0.label ?? ""), "value": $0.value.stringValue] as [String: Any] },
+            "emails": c.emailAddresses.map { ["label": CNLabeledValue<NSString>.localizedString(forLabel: $0.label ?? ""), "value": $0.value as String] as [String: Any] },
+            "notes": note,
+            "image_data": c.imageDataAvailable,
         ]
+    }
+}
+
+extension CNContact {
+    func isKeyAvailable(_ key: String) -> Bool {
+        return (self as NSObject).responds(to: NSSelectorFromString(key))
     }
 }
 ```
@@ -1280,7 +1419,7 @@ Expected: permission dialog on first run; JSON array on subsequent.
 
 ```bash
 git add Sources/AppleHelper/ContactsCommands.swift Sources/AppleHelper/RootCommand.swift
-git commit -m "feat: wire Contacts ops (8 ops)"
+git commit -m "feat: Contacts ops (8) on Contacts framework directly"
 ```
 
 ---
@@ -1412,19 +1551,12 @@ jobs:
 
       - name: Build universal binary
         run: |
+          # Per Phase 0 R6: single command produces a fat Mach-O at
+          # .build/apple/Products/Release/<product> (NOT .build/release/).
           swift build -c release --arch arm64 --arch x86_64
           mkdir -p dist
-          cp .build/apple64-apple-macosx/release/apple-helper dist/apple-helper 2>/dev/null \
-            || cp .build/release/apple-helper dist/apple-helper
+          cp .build/apple/Products/Release/apple-helper dist/apple-helper
           lipo -info dist/apple-helper
-          # If SwiftPM produced per-arch builds, merge them:
-          if [ -f .build/arm64-apple-macosx/release/apple-helper ] && [ -f .build/x86_64-apple-macosx/release/apple-helper ]; then
-            lipo -create \
-              .build/arm64-apple-macosx/release/apple-helper \
-              .build/x86_64-apple-macosx/release/apple-helper \
-              -output dist/apple-helper
-            lipo -info dist/apple-helper
-          fi
 
       - name: Ad-hoc sign
         run: codesign --force --sign - dist/apple-helper
@@ -1515,13 +1647,12 @@ git push origin master
 
 ```bash
 swift build -c release --arch arm64 --arch x86_64
-lipo -info .build/apple64-apple-macosx/release/apple-helper || \
-  lipo -info .build/release/apple-helper
+lipo -info .build/apple/Products/Release/apple-helper
 ```
 
 Expected: `Architectures in the fat file: ... are: x86_64 arm64` (order may vary).
 
-If you only see one arch, the matrix + lipo-merge fallback in the workflow handles it — you don't need to fix it locally.
+If `lipo -info` reports only one arch, you're probably on an older SwiftPM. Falling back to a per-arch build + manual `lipo -create` works but needs Xcode-selected: `sudo xcode-select -s /Applications/Xcode_15.4.app`. The CI workflow uses a pinned Xcode to avoid this.
 
 ---
 
@@ -1659,67 +1790,185 @@ git commit -m "feat(apple-services): plugin.json with platforms + attributions"
 
 ---
 
-### Task 13: Vendor Notes AppleScript (7 files)
+### Task 13: Write Notes AppleScript/JXA (7 files)
 
-**Files:**
-- Create: `apple-services/applescript/notes/list.applescript`
-- Create: `apple-services/applescript/notes/read.applescript`
-- Create: `apple-services/applescript/notes/create.applescript`
-- Create: `apple-services/applescript/notes/update.applescript`
-- Create: `apple-services/applescript/notes/delete.applescript`
-- Create: `apple-services/applescript/notes/search.applescript`
-- Create: `apple-services/applescript/notes/list-folders.applescript`
+**Files:** (filenames match spec op names — snake_case — so the wrapper can do `$op.$ext` lookup)
+- Create: `apple-services/applescript/notes/list_folders.applescript`
+- Create: `apple-services/applescript/notes/list_notes.jxa`
+- Create: `apple-services/applescript/notes/get_note.applescript`
+- Create: `apple-services/applescript/notes/search_notes.jxa`
+- Create: `apple-services/applescript/notes/create_note.applescript`
+- Create: `apple-services/applescript/notes/update_note.applescript`
+- Create: `apple-services/applescript/notes/delete_note.applescript`
 
-Exact upstream paths from Phase 0 R4 findings.
+**Phase 0 R4 finding:** upstream (`supermemoryai/apple-mcp`, formerly `Dhravya/apple-mcp`) embeds scripts in TypeScript (`utils/notes.ts`), and **every list-returning script returns `[]` because the author gave up on parsing AppleScript record lists via run-applescript**. Approach: extract the create/read/delete script bodies (those work) and rewrite all list-returning ops as **JXA** (JavaScript for Automation) which emits real JSON via `JSON.stringify`.
 
-- [ ] **Step 1: Clone Dhravya/apple-mcp at confirmed SHA**
+The wrapper (Task 15) dispatches either `.applescript` or `.jxa` based on file extension.
 
-```bash
-cd /tmp
-rm -rf apple-mcp-upstream
-git clone https://github.com/Dhravya/apple-mcp.git apple-mcp-upstream
-cd apple-mcp-upstream
-git checkout $(cat /c/Users/desti/youcoded-dev/docs/superpowers/plans/research/2026-04-17-apple-dhravya-inventory.md | grep -oE 'SHA [a-f0-9]+' | head -1 | cut -d' ' -f2)
-VENDOR_SHA=$(git rev-parse HEAD)
-echo "Pulling at $VENDOR_SHA"
-```
-
-- [ ] **Step 2: Copy Notes scripts (paths from R4)**
-
-Per R4, the upstream files map to our target names like this (adjust if R4 findings show different paths):
+- [ ] **Step 1: Clone upstream for reference**
 
 ```bash
-TARGET=/c/Users/desti/youcoded-dev/.worktrees/apple-services/apple-services/applescript/notes
-
-# The upstream repo may have these in TypeScript + embedded AppleScript strings,
-# or as .applescript files. R4 findings will confirm which.
-# Below assumes discrete .applescript files. Adjust to match R4.
-cp applescript/notes/list-notes.applescript "$TARGET/list.applescript"
-cp applescript/notes/read-note.applescript "$TARGET/read.applescript"
-cp applescript/notes/create-note.applescript "$TARGET/create.applescript"
-cp applescript/notes/update-note.applescript "$TARGET/update.applescript"
-cp applescript/notes/delete-note.applescript "$TARGET/delete.applescript"
-cp applescript/notes/search-notes.applescript "$TARGET/search.applescript"
-cp applescript/notes/list-folders.applescript "$TARGET/list-folders.applescript"
+mkdir -p ~/reference
+cd ~/reference
+rm -rf apple-mcp
+git clone https://github.com/supermemoryai/apple-mcp.git
+cd apple-mcp
+# SHA from R4:
+VENDOR_SHA="08e2c53"
+git checkout "$VENDOR_SHA"
 ```
 
-If R4 reveals AppleScript is embedded in `.ts` files only, extract the scripts manually: open each `src/tools/notes-*.ts`, copy the AppleScript string body into a `.applescript` file, and adapt the `{{placeholder}}` interpolations to read from `on run argv`.
+Open `utils/notes.ts` in an editor — that's where all the Notes scripts live as backtick template strings inside methods like `createNote`, `findNote`, `getAllNotes`, `getNotesFromFolder`.
 
-- [ ] **Step 3: Adapt each script to accept argv inputs**
+- [ ] **Step 2: Write list-folders.applescript (simple, count-returning only — no record lists)**
 
-Every vendored script needs a uniform shape:
+```bash
+cd /c/Users/desti/youcoded-dev/.worktrees/apple-services
+```
+
+Create `apple-services/applescript/notes/list_folders.applescript`:
 
 ```applescript
 on run argv
-    -- parse argv[1], argv[2], ... per op contract
-    -- return JSON string (or raw text for search/read where JSON is impractical)
+    tell application "Notes"
+        set folderList to folders
+        set output to "["
+        set first_ to true
+        repeat with f in folderList
+            if not first_ then set output to output & ","
+            set first_ to false
+            set fName to name of f
+            set fCount to count of notes of f
+            set output to output & "{\"name\":" & my jsonStr(fName) & ",\"note_count\":" & fCount & "}"
+        end repeat
+        set output to output & "]"
+        return output
+    end tell
 end run
+
+on jsonStr(s)
+    set escaped to ""
+    repeat with ch in (characters of s)
+        set c to ch as string
+        if c is "\"" then
+            set escaped to escaped & "\\\""
+        else if c is "\\" then
+            set escaped to escaped & "\\\\"
+        else if c is return or c is linefeed then
+            set escaped to escaped & "\\n"
+        else if c is tab then
+            set escaped to escaped & "\\t"
+        else
+            set escaped to escaped & c
+        end if
+    end repeat
+    return "\"" & escaped & "\""
+end jsonStr
 ```
 
-Example adaptation for `create.applescript` (name, body, folder):
+- [ ] **Step 3: Write list_notes.jxa (uses JXA for clean JSON)**
+
+Create `apple-services/applescript/notes/list_notes.jxa`:
+
+```javascript
+// Run with: osascript -l JavaScript list_notes.jxa [folderName]
+function run(argv) {
+    const Notes = Application('Notes');
+    Notes.includeStandardAdditions = true;
+    const folderFilter = argv[0] || '';
+
+    let notesToShow;
+    if (folderFilter) {
+        const folder = Notes.folders.whose({name: folderFilter})[0];
+        if (!folder) {
+            return JSON.stringify({error: {code: 'NOT_FOUND', service: 'notes', message: `Folder not found: ${folderFilter}`, recovery: 'Check folder name.'}});
+        }
+        notesToShow = folder.notes();
+    } else {
+        notesToShow = Notes.notes();
+    }
+
+    const result = notesToShow.map(n => ({
+        id: n.id(),
+        name: n.name(),
+        modified: n.modificationDate().toISOString(),
+    }));
+    return JSON.stringify(result);
+}
+```
+
+- [ ] **Step 4: Write get_note.applescript**
+
+Create `apple-services/applescript/notes/get_note.applescript`:
 
 ```applescript
 on run argv
+    if (count of argv) < 1 then error "get_note.applescript requires: <note-id>"
+    set noteId to item 1 of argv
+    tell application "Notes"
+        set target_ to note id noteId
+        set nName to name of target_
+        set nBody to body of target_
+        set nMod to modification date of target_
+    end tell
+    -- Return raw (not JSON) — wrapper will wrap.
+    -- Format: id\tname\tISO-modified\tHTML-body
+    return noteId & tab & nName & tab & (my iso(nMod)) & tab & nBody
+end run
+
+on iso(d)
+    set {year_, month_, day_, hour_, min_, sec_} to {year of d, month of d as integer, day of d, hour of d, minutes of d, seconds of d}
+    return (year_ as string) & "-" & my pad(month_) & "-" & my pad(day_) & "T" & my pad(hour_) & ":" & my pad(min_) & ":" & my pad(sec_)
+end iso
+
+on pad(n)
+    if n < 10 then return "0" & n
+    return n as string
+end pad
+```
+
+Note: the wrapper (Task 15) parses this TSV output and runs HTML→markdown conversion before returning JSON to the skill. Keeping the AppleScript simple avoids JSON-escaping body HTML.
+
+- [ ] **Step 5: Write search_notes.jxa**
+
+Create `apple-services/applescript/notes/search_notes.jxa`:
+
+```javascript
+// Run with: osascript -l JavaScript search_notes.jxa <query> [folderName]
+function run(argv) {
+    const query = (argv[0] || '').toLowerCase();
+    const folderFilter = argv[1] || '';
+    if (!query) return JSON.stringify({error: {code: 'INVALID_ARG', service: 'notes', message: 'search requires a query', recovery: 'Pass the query as the first argument.'}});
+
+    const Notes = Application('Notes');
+    const source = folderFilter
+        ? (Notes.folders.whose({name: folderFilter})[0] || {}).notes
+        : Notes.notes;
+    if (!source) return JSON.stringify([]);
+
+    const results = [];
+    for (const n of source()) {
+        const name = n.name();
+        const body = n.plaintext();  // plaintext strips HTML — good for snippet
+        const hay = (name + ' ' + body).toLowerCase();
+        if (hay.includes(query)) {
+            const idx = hay.indexOf(query);
+            const snippet = body.substring(Math.max(0, idx - 40), idx + query.length + 40);
+            results.push({id: n.id(), name: name, snippet: snippet});
+        }
+        if (results.length >= 20) break;
+    }
+    return JSON.stringify(results);
+}
+```
+
+- [ ] **Step 6: Write create_note.applescript (extracted + adapted from upstream)**
+
+Create `apple-services/applescript/notes/create_note.applescript`. Reference: `utils/notes.ts` `createNote` method around lines 340-400 of upstream.
+
+```applescript
+on run argv
+    if (count of argv) < 2 then error "create_note.applescript requires: <name> <body> [folder]"
     set noteName to item 1 of argv
     set noteBody to item 2 of argv
     set folderName to ""
@@ -1729,80 +1978,258 @@ on run argv
         if folderName is "" then
             set newNote to make new note with properties {name:noteName, body:noteBody}
         else
-            set targetFolder to folder folderName
-            set newNote to make new note at targetFolder with properties {name:noteName, body:noteBody}
+            try
+                set targetFolder to first folder whose name is folderName
+                set newNote to make new note at targetFolder with properties {name:noteName, body:noteBody}
+            on error
+                error "Folder not found: " & folderName
+            end try
         end if
         set noteId to id of newNote
     end tell
-
-    -- Return a JSON-ish result the wrapper will pass through.
     return "{\"id\":\"" & noteId & "\",\"name\":\"" & noteName & "\"}"
 end run
 ```
 
-Apply the same pattern to the other 6 scripts. The exact arg ordering + output shape for each is specified in Task 15 (wrapper) and must match.
+- [ ] **Step 7: Write update_note.applescript**
 
-- [ ] **Step 4: Syntax-check each script**
+Create `apple-services/applescript/notes/update_note.applescript`:
+
+```applescript
+on run argv
+    if (count of argv) < 2 then error "update_note.applescript requires: <id> <body> [mode=replace|append|prepend]"
+    set noteId to item 1 of argv
+    set newBody to item 2 of argv
+    set mode to "replace"
+    if (count of argv) >= 3 then set mode to item 3 of argv
+
+    tell application "Notes"
+        set target_ to note id noteId
+        if mode is "replace" then
+            set body of target_ to newBody
+        else if mode is "append" then
+            set body of target_ to (body of target_) & "<br>" & newBody
+        else if mode is "prepend" then
+            set body of target_ to newBody & "<br>" & (body of target_)
+        else
+            error "Unknown mode: " & mode
+        end if
+        set nName to name of target_
+    end tell
+    return "{\"id\":\"" & noteId & "\",\"name\":\"" & nName & "\"}"
+end run
+```
+
+- [ ] **Step 8: Write delete_note.applescript**
+
+Create `apple-services/applescript/notes/delete_note.applescript`:
+
+```applescript
+on run argv
+    if (count of argv) < 1 then error "delete_note.applescript requires: <id>"
+    set noteId to item 1 of argv
+    tell application "Notes"
+        delete note id noteId
+    end tell
+    return "{\"ok\":true}"
+end run
+```
+
+- [ ] **Step 9: Syntax-check each script**
 
 ```bash
-cd /c/Users/desti/youcoded-dev/.worktrees/apple-services
 for f in apple-services/applescript/notes/*.applescript; do
-  osascript -s o "$f" 2>&1 | head -1
+  echo "== $f"
+  osascript -s o "$f" 2>&1 | head -3
+done
+for f in apple-services/applescript/notes/*.jxa; do
+  echo "== $f"
+  osascript -l JavaScript -s o "$f" 2>&1 | head -3
 done
 ```
 
-Expected: each file syntax-checks without error. Errors here are almost always missing args (which is fine — `osascript -s o` only validates parse-ability).
+Expected: each file parses without syntax error. Missing-args errors are fine (scripts require argv).
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
 git add apple-services/applescript/notes/
-git commit -m "vendor(apple-services): Notes AppleScript from Dhravya/apple-mcp @ $VENDOR_SHA"
+git commit -m "feat(apple-services): Notes AppleScript/JXA backends
+
+AppleScript for create/update/read/delete (adapted from supermemoryai/apple-mcp
+@ $VENDOR_SHA where upstream had working scripts). JXA for list/search because
+upstream's AppleScript list-returning paths return [] due to run-applescript
+record-parsing limitations — JXA's JSON.stringify gives us reliable output.
+
+list-folders uses hand-rolled JSON escaping since it only returns simple
+{name, note_count} records."
 ```
 
 ---
 
-### Task 14: Vendor Mail AppleScript (6 files)
+### Task 14: Write Mail AppleScript/JXA (6 files)
 
-**Files:**
-- Create: `apple-services/applescript/mail/search.applescript`
-- Create: `apple-services/applescript/mail/read.applescript`
+**Files:** (snake_case filenames match spec op names)
+- Create: `apple-services/applescript/mail/list_mailboxes.jxa`
+- Create: `apple-services/applescript/mail/search.jxa`
+- Create: `apple-services/applescript/mail/read_message.applescript`
 - Create: `apple-services/applescript/mail/send.applescript`
-- Create: `apple-services/applescript/mail/create-draft.applescript`
-- Create: `apple-services/applescript/mail/list-mailboxes.applescript`
-- Create: `apple-services/applescript/mail/mark-read.applescript`
+- Create: `apple-services/applescript/mail/create_draft.applescript`
+- Create: `apple-services/applescript/mail/mark_read.applescript`
+- Create: `apple-services/applescript/mail/mark_unread.applescript` (thin wrapper — same script with unread=1)
 
-- [ ] **Step 1: Copy + adapt Mail scripts**
+**Phase 0 R4 finding:** upstream has only `sendMail` (without attachments) + `getMailboxesForAccount` in a directly-usable shape. All list/search paths return `[]`. We write list-mailboxes + search as JXA (reliable JSON); use AppleScript for read/send/create-draft/mark-read where upstream works or the op is simple.
 
-Same pattern as Task 13. Exact upstream paths from R4.
+- [ ] **Step 1: Write list_mailboxes.jxa**
 
-```bash
-cd /tmp/apple-mcp-upstream
-TARGET=/c/Users/desti/youcoded-dev/.worktrees/apple-services/apple-services/applescript/mail
-
-cp applescript/mail/search-messages.applescript "$TARGET/search.applescript"
-cp applescript/mail/read-message.applescript "$TARGET/read.applescript"
-cp applescript/mail/send-message.applescript "$TARGET/send.applescript"
-cp applescript/mail/create-draft.applescript "$TARGET/create-draft.applescript"
-cp applescript/mail/list-mailboxes.applescript "$TARGET/list-mailboxes.applescript"
-cp applescript/mail/mark-read.applescript "$TARGET/mark-read.applescript"
+```javascript
+// osascript -l JavaScript list_mailboxes.jxa [accountName]
+function run(argv) {
+    const Mail = Application('Mail');
+    const filterAccount = argv[0] || '';
+    const result = [];
+    const accounts = filterAccount
+        ? Mail.accounts.whose({name: filterAccount})()
+        : Mail.accounts();
+    for (const acct of accounts) {
+        for (const box of acct.mailboxes()) {
+            result.push({
+                name: box.name(),
+                account: acct.name(),
+                unread_count: box.unreadCount(),
+            });
+        }
+    }
+    return JSON.stringify(result);
+}
 ```
 
-Adapt each to accept `on run argv` with the arg order matching Task 15's wrapper.
+- [ ] **Step 2: Write search.jxa**
 
-Example for `send.applescript` (to, subject, body):
+```javascript
+// osascript -l JavaScript search.jxa <query> [mailbox] [from] [to] [since ISO] [limit]
+function run(argv) {
+    const query = (argv[0] || '').toLowerCase();
+    const mailbox = argv[1] || '';
+    const from = (argv[2] || '').toLowerCase();
+    const to = (argv[3] || '').toLowerCase();
+    const sinceStr = argv[4] || '';
+    const limit = parseInt(argv[5] || '50', 10);
+    const sinceDate = sinceStr ? new Date(sinceStr) : null;
+
+    const Mail = Application('Mail');
+    const results = [];
+
+    for (const acct of Mail.accounts()) {
+        for (const box of acct.mailboxes()) {
+            if (mailbox && box.name() !== mailbox) continue;
+            for (const msg of box.messages()) {
+                try {
+                    const subj = (msg.subject() || '').toLowerCase();
+                    const sender = (msg.sender() || '').toLowerCase();
+                    const recips = (msg.toRecipients.address() || []).join(' ').toLowerCase();
+                    const preview = (msg.content() || '').substring(0, 200).toLowerCase();
+                    if (query && !(subj + ' ' + preview).includes(query)) continue;
+                    if (from && !sender.includes(from)) continue;
+                    if (to && !recips.includes(to)) continue;
+                    if (sinceDate) {
+                        const d = new Date(msg.dateSent());
+                        if (d < sinceDate) continue;
+                    }
+                    results.push({
+                        id: msg.id(),
+                        from: msg.sender(),
+                        subject: msg.subject(),
+                        date: new Date(msg.dateSent()).toISOString(),
+                        preview: (msg.content() || '').substring(0, 200),
+                    });
+                    if (results.length >= limit) return JSON.stringify(results);
+                } catch (e) { /* skip problematic messages */ }
+            }
+        }
+    }
+    return JSON.stringify(results);
+}
+```
+
+- [ ] **Step 3: Write read_message.applescript**
 
 ```applescript
 on run argv
+    if (count of argv) < 1 then error "read_message.applescript requires: <message-id>"
+    set msgId to item 1 of argv
+    tell application "Mail"
+        -- Mail message IDs are scoped to their mailbox; search across all.
+        set foundMsg to missing value
+        repeat with acct in accounts
+            repeat with box in mailboxes of acct
+                try
+                    set foundMsg to (first message of box whose id is msgId)
+                    exit repeat
+                end try
+            end repeat
+            if foundMsg is not missing value then exit repeat
+        end repeat
+        if foundMsg is missing value then error "Message not found: " & msgId
+        set msgFrom to sender of foundMsg
+        set msgSubject to subject of foundMsg
+        set msgDate to date sent of foundMsg
+        set msgBody to content of foundMsg
+    end tell
+    -- TSV: id\tfrom\tsubject\tISO-date\tbody. Wrapper converts to JSON.
+    return msgId & tab & msgFrom & tab & msgSubject & tab & (my iso(msgDate)) & tab & msgBody
+end run
+
+on iso(d)
+    set {year_, month_, day_, hour_, min_, sec_} to {year of d, month of d as integer, day of d, hour of d, minutes of d, seconds of d}
+    return (year_ as string) & "-" & my pad(month_) & "-" & my pad(day_) & "T" & my pad(hour_) & ":" & my pad(min_) & ":" & my pad(sec_)
+end iso
+
+on pad(n)
+    if n < 10 then return "0" & n
+    return n as string
+end pad
+```
+
+- [ ] **Step 4: Write send.applescript** (reference: upstream `sendMail` in `utils/mail.ts`)
+
+```applescript
+on run argv
+    if (count of argv) < 3 then error "send.applescript requires: <to-csv> <subject> <body> [cc-csv] [bcc-csv] [attach-paths-csv]"
     set recipientList to item 1 of argv
     set msgSubject to item 2 of argv
     set msgBody to item 3 of argv
+    set ccList to ""
+    set bccList to ""
+    set attachList to ""
+    if (count of argv) >= 4 then set ccList to item 4 of argv
+    if (count of argv) >= 5 then set bccList to item 5 of argv
+    if (count of argv) >= 6 then set attachList to item 6 of argv
 
     tell application "Mail"
         set newMsg to make new outgoing message with properties {subject:msgSubject, content:msgBody, visible:false}
         tell newMsg
-            repeat with recipient in (my splitOnCommas(recipientList))
-                make new to recipient at end of to recipients with properties {address:recipient}
+            repeat with r in (my splitCSV(recipientList))
+                if r is not "" then
+                    make new to recipient at end of to recipients with properties {address:r}
+                end if
+            end repeat
+            repeat with r in (my splitCSV(ccList))
+                if r is not "" then
+                    make new cc recipient at end of cc recipients with properties {address:r}
+                end if
+            end repeat
+            repeat with r in (my splitCSV(bccList))
+                if r is not "" then
+                    make new bcc recipient at end of bcc recipients with properties {address:r}
+                end if
+            end repeat
+            repeat with p in (my splitCSV(attachList))
+                if p is not "" then
+                    try
+                        make new attachment with properties {file name:(POSIX file p)} at after the last paragraph
+                    end try
+                end if
             end repeat
             send
         end tell
@@ -1810,22 +2237,136 @@ on run argv
     return "{\"ok\":true}"
 end run
 
-on splitOnCommas(s)
+on splitCSV(s)
+    if s is "" then return {}
     set AppleScript's text item delimiters to ","
     set parts to text items of s
     set AppleScript's text item delimiters to ""
     return parts
-end splitOnCommas
+end splitCSV
 ```
 
-- [ ] **Step 2: Syntax-check + commit**
+- [ ] **Step 5: Write create_draft.applescript**
+
+Same args as `send`, but saves instead of sending:
+
+```applescript
+on run argv
+    if (count of argv) < 3 then error "create_draft.applescript requires: <to-csv> <subject> <body> [cc-csv] [bcc-csv]"
+    set recipientList to item 1 of argv
+    set msgSubject to item 2 of argv
+    set msgBody to item 3 of argv
+    set ccList to ""
+    set bccList to ""
+    if (count of argv) >= 4 then set ccList to item 4 of argv
+    if (count of argv) >= 5 then set bccList to item 5 of argv
+
+    tell application "Mail"
+        set newMsg to make new outgoing message with properties {subject:msgSubject, content:msgBody, visible:true}
+        tell newMsg
+            repeat with r in (my splitCSV(recipientList))
+                if r is not "" then
+                    make new to recipient at end of to recipients with properties {address:r}
+                end if
+            end repeat
+            repeat with r in (my splitCSV(ccList))
+                if r is not "" then
+                    make new cc recipient at end of cc recipients with properties {address:r}
+                end if
+            end repeat
+            repeat with r in (my splitCSV(bccList))
+                if r is not "" then
+                    make new bcc recipient at end of bcc recipients with properties {address:r}
+                end if
+            end repeat
+            save
+            set draftId to id of it
+        end tell
+    end tell
+    return "{\"id\":\"" & draftId & "\"}"
+end run
+
+on splitCSV(s)
+    if s is "" then return {}
+    set AppleScript's text item delimiters to ","
+    set parts to text items of s
+    set AppleScript's text item delimiters to ""
+    return parts
+end splitCSV
+```
+
+- [ ] **Step 6: Write mark_read.applescript and mark_unread.applescript**
+
+Both scripts share the same logic; `mark_unread` just sets the read-status bit differently. Write them as two thin files so the wrapper's filename-based dispatch works without arg translation.
+
+`apple-services/applescript/mail/mark_read.applescript`:
+
+```applescript
+on run argv
+    if (count of argv) < 1 then error "mark_read.applescript requires: <message-id>"
+    set msgId to item 1 of argv
+    tell application "Mail"
+        set foundMsg to missing value
+        repeat with acct in accounts
+            repeat with box in mailboxes of acct
+                try
+                    set foundMsg to (first message of box whose id is msgId)
+                    exit repeat
+                end try
+            end repeat
+            if foundMsg is not missing value then exit repeat
+        end repeat
+        if foundMsg is missing value then error "Message not found: " & msgId
+        set read status of foundMsg to true
+    end tell
+    return "{\"ok\":true}"
+end run
+```
+
+`apple-services/applescript/mail/mark_unread.applescript`:
+
+```applescript
+on run argv
+    if (count of argv) < 1 then error "mark_unread.applescript requires: <message-id>"
+    set msgId to item 1 of argv
+    tell application "Mail"
+        set foundMsg to missing value
+        repeat with acct in accounts
+            repeat with box in mailboxes of acct
+                try
+                    set foundMsg to (first message of box whose id is msgId)
+                    exit repeat
+                end try
+            end repeat
+            if foundMsg is not missing value then exit repeat
+        end repeat
+        if foundMsg is missing value then error "Message not found: " & msgId
+        set read status of foundMsg to false
+    end tell
+    return "{\"ok\":true}"
+end run
+```
+
+- [ ] **Step 7: Syntax-check + commit**
 
 ```bash
 for f in apple-services/applescript/mail/*.applescript; do
-  osascript -s o "$f" 2>&1 | head -1
+  echo "== $f"
+  osascript -s o "$f" 2>&1 | head -3
 done
+for f in apple-services/applescript/mail/*.jxa; do
+  echo "== $f"
+  osascript -l JavaScript -s o "$f" 2>&1 | head -3
+done
+
 git add apple-services/applescript/mail/
-git commit -m "vendor(apple-services): Mail AppleScript from Dhravya/apple-mcp @ $VENDOR_SHA"
+git commit -m "feat(apple-services): Mail AppleScript/JXA backends
+
+JXA for list-mailboxes + search (reliable JSON); AppleScript for
+read/send/create-draft/mark-read. read.applescript emits TSV for
+wrapper JSON-wrapping. Scripts reference supermemoryai/apple-mcp
+@ $VENDOR_SHA where upstream had working create/send paths; rewrote
+list-returning paths using JXA."
 ```
 
 ---
@@ -1931,8 +2472,19 @@ route_helper() {
 # ─── AppleScript routing (notes, mail) ──────────────────────────────────────
 
 route_applescript() {
-  local script="$PLUGIN_DIR/applescript/$integration/$op.applescript"
-  [ -f "$script" ] || err_out INVALID_ARG "$integration" "Unknown op: $op" "See skills/$integration/SKILL.md for op list."
+  # Dispatch by file extension: .jxa for JavaScript (for list-returning ops
+  # where AppleScript record-list parsing is broken upstream — see Phase 0
+  # R4), .applescript for everything else.
+  local script osascript_lang
+  if [ -f "$PLUGIN_DIR/applescript/$integration/$op.jxa" ]; then
+    script="$PLUGIN_DIR/applescript/$integration/$op.jxa"
+    osascript_lang=(-l JavaScript)
+  elif [ -f "$PLUGIN_DIR/applescript/$integration/$op.applescript" ]; then
+    script="$PLUGIN_DIR/applescript/$integration/$op.applescript"
+    osascript_lang=()
+  else
+    err_out INVALID_ARG "$integration" "Unknown op: $op" "See skills/$integration/SKILL.md for op list."
+  fi
 
   # Serialize concurrent calls to the same target app — AppleScript talks to
   # the live app process and two parallel osascripts fighting over Mail.app
@@ -1945,8 +2497,11 @@ route_applescript() {
   local stderr_file; stderr_file="$(mktemp)"
   local stdout_file; stdout_file="$(mktemp)"
 
-  if timeout "$timeout" osascript "$script" "$@" > "$stdout_file" 2> "$stderr_file"; then
-    cat "$stdout_file"
+  if timeout "$timeout" osascript "${osascript_lang[@]}" "$script" "$@" > "$stdout_file" 2> "$stderr_file"; then
+    # Post-process TSV-emitting AppleScript ops (notes/get_note, mail/read_message)
+    # into JSON. These scripts return tab-separated fields because JSON-escaping
+    # HTML bodies from AppleScript is painful.
+    post_process_applescript_output < "$stdout_file"
     rm -f "$stderr_file" "$stdout_file"
     return 0
   fi
@@ -1969,6 +2524,38 @@ route_applescript() {
   local msg; msg=$(head -c 500 < "$stderr_file" | tr '\n' ' ')
   rm -f "$stderr_file" "$stdout_file"
   err_out INTERNAL "$integration" "$msg" "Check Console.app logs for $integration.app errors."
+}
+
+# Convert TSV-shaped AppleScript output for specific ops into JSON.
+# Ops that return TSV (from Tasks 13/14): notes/get_note, mail/read_message.
+# All other ops return JSON already and pass through unchanged.
+post_process_applescript_output() {
+  local raw; raw=$(cat)
+  case "$integration/$op" in
+    notes/get_note)
+      # Format: id\tname\tISO-modified\tHTML-body
+      jq -cn --arg raw "$raw" '
+        ($raw | split("\t")) as $parts
+        | {id: $parts[0], name: $parts[1], modified: $parts[2], body_markdown: (($parts[3:] | join("\t")) | html_to_md_placeholder)}
+      ' 2>/dev/null \
+      || jq -cn --arg raw "$raw" '
+        ($raw | split("\t")) as $parts
+        | {id: $parts[0], name: $parts[1], modified: $parts[2], body_markdown: ($parts[3:] | join("\t"))}
+      '
+      # Note: real HTML→markdown conversion would need pandoc or similar.
+      # v1 returns the raw HTML as body_markdown; skill's SKILL.md documents this.
+      ;;
+    mail/read_message)
+      # Format: id\tfrom\tsubject\tISO-date\tbody
+      jq -cn --arg raw "$raw" '
+        ($raw | split("\t")) as $parts
+        | {id: $parts[0], from: $parts[1], subject: $parts[2], date: $parts[3], body_text: ($parts[4:] | join("\t")), to: [], cc: [], attachments: []}
+      '
+      ;;
+    *)
+      printf '%s' "$raw"
+      ;;
+  esac
 }
 
 # ─── iCloud filesystem routing ──────────────────────────────────────────────
@@ -2006,26 +2593,49 @@ route_icloud() {
       [ "$recursive" = 0 ] && find_args+=(-maxdepth 1)
       find "$full" "${find_args[@]}" -print0 2>/dev/null | while IFS= read -r -d '' entry; do
         local base; base="$(basename "$entry")"
-        # Detect iCloud placeholder files (not yet downloaded)
+        # Two iCloud placeholder representations (Phase 0 R8):
+        # 1. Legacy dot-prefixed .icloud stubs (pre-Sonoma filesystems):
         if [[ "$base" == .*.icloud ]]; then
-          real_name="${base#.}"; real_name="${real_name%.icloud}"
+          local real_name="${base#.}"; real_name="${real_name%.icloud}"
           jq -cn --arg n "$real_name" --arg t "placeholder" '{name: $n, type: $t, size: 0, modified: null}'
-        else
-          local type size modified
-          if [ -d "$entry" ]; then type=dir; size=0;
-          else type=file; size=$(stat -f%z "$entry"); fi
-          modified=$(date -u -r "$(stat -f%m "$entry")" +%Y-%m-%dT%H:%M:%SZ)
-          jq -cn --arg n "$base" --arg t "$type" --argjson s "$size" --arg m "$modified" '{name: $n, type: $t, size: $s, modified: $m}'
+          continue
         fi
+        # 2. APFS dataless files (Sonoma+ default): SF_DATALESS flag (0x40000000)
+        #    set in st_flags. stat -f%Xf gives flags in hex.
+        if [ -f "$entry" ]; then
+          local flags; flags=$(stat -f%Xf "$entry" 2>/dev/null || echo 0)
+          # Bash doesn't do hex bitwise AND easily; use printf + shell arithmetic.
+          local flags_dec; flags_dec=$(printf '%d' "0x$flags" 2>/dev/null || echo 0)
+          if (( (flags_dec & 0x40000000) != 0 )); then
+            local size; size=$(stat -f%z "$entry")
+            local modified; modified=$(date -u -r "$(stat -f%m "$entry")" +%Y-%m-%dT%H:%M:%SZ)
+            jq -cn --arg n "$base" --arg t "placeholder" --argjson s "$size" --arg m "$modified" '{name: $n, type: $t, size: $s, modified: $m}'
+            continue
+          fi
+        fi
+        # Normal entry
+        local type size modified
+        if [ -d "$entry" ]; then type=dir; size=0;
+        else type=file; size=$(stat -f%z "$entry"); fi
+        modified=$(date -u -r "$(stat -f%m "$entry")" +%Y-%m-%dT%H:%M:%SZ)
+        jq -cn --arg n "$base" --arg t "$type" --argjson s "$size" --arg m "$modified" '{name: $n, type: $t, size: $s, modified: $m}'
       done | jq -cs .
       ;;
     read)
       local full; full=$(resolve "$path")
       local base; base="$(basename "$full")"
+      # Reject legacy .icloud stub (file wouldn't even exist at the cleaned name)
       if [ -e "$(dirname "$full")/.${base}.icloud" ]; then
         err_out UNAVAILABLE icloud "This file is in iCloud but not downloaded." "Open Finder, right-click the file, Download Now, then retry."
       fi
       [ -f "$full" ] || err_out NOT_FOUND icloud "Not a file: $path" "Check the path."
+      # Reject SF_DATALESS dataless file — reading it would trigger a sync
+      # download that can stall for many seconds on slow networks.
+      local flags; flags=$(stat -f%Xf "$full" 2>/dev/null || echo 0)
+      local flags_dec; flags_dec=$(printf '%d' "0x$flags" 2>/dev/null || echo 0)
+      if (( (flags_dec & 0x40000000) != 0 )); then
+        err_out UNAVAILABLE icloud "This file is in iCloud but not downloaded locally yet." "Open Finder, right-click the file, Download Now, then retry."
+      fi
       if file --mime-encoding "$full" | grep -q 'binary'; then
         local size; size=$(stat -f%z "$full")
         local type; type=$(file --mime-type -b "$full")
@@ -2344,21 +2954,43 @@ Send:
 
 > macOS is about to ask if **{{host_friendly}}** can control Notes, then the same for Mail. Click **OK** on both prompts.
 
-Run (with 10s timeout to catch a stuck Mail.app):
+Run (with 10s timeout as belt-and-suspenders for indexing edge cases):
 
 ```bash
 timeout 10 osascript -e 'tell application "Notes" to count notes' 2>&1
 notes_exit=$?
-timeout 10 osascript -e 'tell application "Mail" to count messages of inbox' 2>&1
-mail_exit=$?
-echo "notes=$notes_exit mail=$mail_exit"
+
+# Per Phase 0 R7: use 'count every account' as the Mail pre-flight. Returns 0
+# instantly when Mail has no accounts configured, avoiding the hanging
+# inbox-construction path that 'count messages of inbox' hits.
+mail_acct_out=$(timeout 10 osascript -e 'tell application "Mail" to count every account' 2>&1)
+mail_acct_exit=$?
+if [ "$mail_acct_exit" = 0 ] && [ "$mail_acct_out" = "0" ]; then
+  mail_result=NO_ACCOUNTS
+elif [ "$mail_acct_exit" != 0 ]; then
+  mail_result="FAIL:$mail_acct_out"
+else
+  # Mail has accounts — confirm mailboxes are queryable.
+  timeout 10 osascript -e 'tell application "Mail" to count messages of inbox' 2>&1
+  mail_msgs_exit=$?
+  if [ "$mail_msgs_exit" = 0 ]; then
+    mail_result=OK
+  elif [ "$mail_msgs_exit" = 124 ]; then
+    mail_result=MAIL_SLOW
+  else
+    mail_result=FAIL
+  fi
+fi
+echo "notes=$notes_exit mail=$mail_result"
 ```
 
 Handle:
-- Both `=0` → send "Notes and Mail are connected." and continue to Step 6.
+- `notes=0` and `mail=OK` → send "Notes and Mail are connected." and continue to Step 6.
 - `notes != 0` with `(-1743)` in stderr → send "Notes access was denied. Open System Settings → Privacy & Security → Automation, find **{{host_friendly}}**, turn on Notes underneath it. Then run `/apple-services-setup` again." and stop.
-- `mail != 0` with `(-1743)` → same for Mail.
-- `mail = 124` (timed out) → send "Mail isn't fully set up yet. Open Mail.app, finish account setup if it's prompting you, then run `/apple-services-setup` again." and stop.
+- `mail=NO_ACCOUNTS` → send "Mail isn't set up yet — it has no accounts configured. Open Mail.app, add at least one account, then run `/apple-services-setup` again." and stop.
+- `mail=MAIL_SLOW` → send "Mail is still indexing — give it a few minutes, then run `/apple-services-setup` again." and stop.
+- `mail=FAIL:...` with `(-1743)` in the message → Automation was denied; emit the automation-recovery message substituting `{{host_friendly}}`.
+- `mail=FAIL` → send the generic "Mail didn't respond" error and stop.
 ```
 
 - [ ] **Step 2: Commit**
@@ -2399,12 +3031,12 @@ probe() {
 probe calendar     calendar     list_calendars
 probe reminders    reminders    list_lists
 probe contacts     contacts     list_groups
-probe notes        notes        list-folders
-probe mail         mail         list-mailboxes
+probe notes        notes        list_folders
+probe mail         mail         list_mailboxes
 probe icloud       icloud       list        --path ""
 ```
 
-(Note: notes/mail probe names match `.applescript` filenames; others match op names.)
+(All op names are snake_case, matching the AppleScript/JXA file basenames and the spec ops tables.)
 
 Parse the output. If all six report `PASS`, continue to Step 7.
 
@@ -3092,24 +3724,17 @@ git commit -m "feat(apple-services): per-op SKILLs for notes/mail"
 
 Provenance for files pulled from third-party sources. Updated on every vendor refresh.
 
-| File | Source | Upstream path | SHA | License | Last pulled |
-|---|---|---|---|---|---|
-| `bin/apple-helper` | `itsdestin/apple-helper` (compiled) | `Sources/` Swift code, with iMCP service modules vendored in | [filled from binary-update PR] | Apache-2.0 (compiled-in iMCP) + MIT (original code) | 2026-04-17 |
-| `applescript/notes/list.applescript` | `Dhravya/apple-mcp` | [confirmed in R4] | [SHA] | MIT | 2026-04-17 |
-| `applescript/notes/read.applescript` | `Dhravya/apple-mcp` | [confirmed in R4] | [SHA] | MIT | 2026-04-17 |
-| `applescript/notes/create.applescript` | `Dhravya/apple-mcp` | [confirmed in R4] | [SHA] | MIT | 2026-04-17 |
-| `applescript/notes/update.applescript` | `Dhravya/apple-mcp` | [confirmed in R4] | [SHA] | MIT | 2026-04-17 |
-| `applescript/notes/delete.applescript` | `Dhravya/apple-mcp` | [confirmed in R4] | [SHA] | MIT | 2026-04-17 |
-| `applescript/notes/search.applescript` | `Dhravya/apple-mcp` | [confirmed in R4] | [SHA] | MIT | 2026-04-17 |
-| `applescript/notes/list-folders.applescript` | `Dhravya/apple-mcp` | [confirmed in R4] | [SHA] | MIT | 2026-04-17 |
-| `applescript/mail/search.applescript` | `Dhravya/apple-mcp` | [confirmed in R4] | [SHA] | MIT | 2026-04-17 |
-| `applescript/mail/read.applescript` | `Dhravya/apple-mcp` | [confirmed in R4] | [SHA] | MIT | 2026-04-17 |
-| `applescript/mail/send.applescript` | `Dhravya/apple-mcp` | [confirmed in R4] | [SHA] | MIT | 2026-04-17 |
-| `applescript/mail/create-draft.applescript` | `Dhravya/apple-mcp` | [confirmed in R4] | [SHA] | MIT | 2026-04-17 |
-| `applescript/mail/list-mailboxes.applescript` | `Dhravya/apple-mcp` | [confirmed in R4] | [SHA] | MIT | 2026-04-17 |
-| `applescript/mail/mark-read.applescript` | `Dhravya/apple-mcp` | [confirmed in R4] | [SHA] | MIT | 2026-04-17 |
+Per Phase 0 findings, most of this plugin is original code. The only meaningfully-vendored files are AppleScript extracts from `supermemoryai/apple-mcp` (MIT). The `bin/apple-helper` binary is original code in the sibling `itsdestin/apple-helper` repo — see that repo's `NOTICE.md` for references. iMCP informed the Swift helper but is not vendored byte-for-byte, so it doesn't appear below.
 
-Fill in SHAs during Task 13-14 execution from `$VENDOR_SHA` captured at pull time.
+| File | Source | Upstream reference | SHA | License | Last pulled |
+|---|---|---|---|---|---|
+| `applescript/notes/create_note.applescript` | supermemoryai/apple-mcp | `utils/notes.ts` (createNote block) | 08e2c53 | MIT | 2026-04-17 |
+| `applescript/notes/*` (all others) | mostly original; reference patterns | `utils/notes.ts` | 08e2c53 | MIT | 2026-04-17 |
+| `applescript/mail/send.applescript` | supermemoryai/apple-mcp | `utils/mail.ts` (sendMail block) | 08e2c53 | MIT | 2026-04-17 |
+| `applescript/mail/list_mailboxes.jxa` | supermemoryai/apple-mcp | `utils/mail.ts` (getMailboxesForAccount pattern) | 08e2c53 | MIT | 2026-04-17 |
+| `applescript/mail/*` (all others) | mostly original; reference patterns | `utils/mail.ts` | 08e2c53 | MIT | 2026-04-17 |
+
+**Re-pull procedure:** when updating from upstream, change the SHA column + `Last pulled` date. No automated drift-check yet (see Spec B). For now, review upstream manually when refreshing.
 ```
 
 - [ ] **Step 2: Write apple-services/NOTICE.md**
@@ -3117,28 +3742,34 @@ Fill in SHAs during Task 13-14 execution from `$VENDOR_SHA` captured at pull tim
 ```markdown
 # NOTICE.md
 
-`apple-services` redistributes modified code from the following third-party sources. License texts are reproduced in full below.
+`apple-services` is MIT-licensed. It incorporates code from the following third-party Open Source projects. License texts are reproduced in full.
 
 ---
 
-## Dhravya/apple-mcp (MIT)
+## supermemoryai/apple-mcp (MIT)
 
-Source: https://github.com/Dhravya/apple-mcp
+Source: https://github.com/supermemoryai/apple-mcp (repo moved from `Dhravya/apple-mcp`)
+
+Extracts from upstream TypeScript files (`utils/notes.ts`, `utils/mail.ts`) inform the scripts in `applescript/notes/` and `applescript/mail/`. Specifically the `createNote`, `findNote`, `sendMail`, and `getMailboxesForAccount` patterns were adapted. List-returning paths were rewritten in JXA because upstream's AppleScript record-parsing returns `[]`.
+
+Full MIT license:
 
 ```
-[paste full MIT license from Dhravya/apple-mcp/LICENSE]
+[paste full MIT license from ~/reference/apple-mcp/LICENSE]
 ```
 
 ---
 
-## iMCP (Apache-2.0, via bin/apple-helper)
+## mattt/iMCP (MIT, reference only for `bin/apple-helper`)
 
-The compiled binary `bin/apple-helper` includes Swift code from `loopwork/iMCP`. License: Apache-2.0.
+Source: https://github.com/mattt/iMCP (repo moved from `loopwork/iMCP`)
 
-See the full license text in `itsdestin/apple-helper/NOTICE.md` (same repo that built the binary).
+The compiled binary `bin/apple-helper` is built from original Swift in the sibling `itsdestin/apple-helper` repo. No iMCP code is vendored byte-for-byte, but its EventKit + Contacts service patterns (`App/Services/{Calendar,Reminders,Contacts}.swift`) informed our implementations and deserve credit.
+
+Full MIT license:
 
 ```
-[paste full Apache-2.0 license here for redistribution compliance]
+[paste full MIT license from ~/reference/iMCP/LICENSE.md]
 ```
 ```
 
@@ -3425,13 +4056,19 @@ Append to `.github/workflows/validate-plugin-pr.yml`:
             echo "touched=no" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: AppleScript syntax check
+      - name: AppleScript + JXA syntax check
         if: steps.touched.outputs.touched == 'yes'
         run: |
           fail=0
           for f in apple-services/applescript/*/*.applescript; do
             if ! osascript -s o "$f" < /dev/null 2>&1; then
-              echo "::error::$f failed syntax check"
+              echo "::error::$f failed AppleScript syntax check"
+              fail=1
+            fi
+          done
+          for f in apple-services/applescript/*/*.jxa; do
+            if ! osascript -l JavaScript -s o "$f" < /dev/null 2>&1; then
+              echo "::error::$f failed JXA syntax check"
               fail=1
             fi
           done
@@ -3597,6 +4234,36 @@ Only continue to Task 29 if all blocking items pass.
 
 ---
 
+### Task 28b: Cross-repo — add TCC usage-description keys to YouCoded desktop
+
+**Not in this plan's repos** — a separate PR against `youcoded/desktop/`. Included here because Apple Services' Automation permissions (Step 5 of the setup) won't attach correctly to YouCoded.app without these keys.
+
+Phase 0 R3 finding: Automation TCC attributes grants to the **responsible (parent) process**. When Claude runs inside the YouCoded Electron app, the parent is YouCoded.app — so YouCoded.app's `Info.plist` must carry usage-description strings or macOS will deny the grant (or show an empty description dialog that users reflexively decline).
+
+- [ ] **Step 1: Open a PR against `youcoded/desktop/`**
+
+In a separate session or manually. Changes needed:
+
+- For **electron-builder** configurations (`electron-builder.yml`, `package.json` `build.mac.extendInfo`, or similar): add these keys to the macOS Info.plist.
+- For **custom Info.plist patchers**: same keys.
+
+```xml
+<key>NSAppleEventsUsageDescription</key>
+<string>YouCoded uses AppleScript automation so Claude can help you with Notes and Mail.</string>
+<key>NSCalendarsUsageDescription</key>
+<string>YouCoded reads and writes your Calendar so Claude can show, create, and update events on your behalf.</string>
+<key>NSRemindersUsageDescription</key>
+<string>YouCoded reads and writes your Reminders so Claude can show, create, and update reminders on your behalf.</string>
+<key>NSContactsUsageDescription</key>
+<string>YouCoded reads and writes your Contacts so Claude can look up and update contact details on your behalf.</string>
+```
+
+- [ ] **Step 2: Note the PR URL in Task 29's release notes**
+
+This cross-repo PR should ship **before or alongside** the apple-services v0.1.0 tag. If it ships after, early users will see empty/denied Automation prompts until they upgrade YouCoded desktop.
+
+---
+
 ### Task 29: Tag apple-services v0.1.0 and open the plugin PR
 
 **Files:**
@@ -3682,8 +4349,10 @@ Drop a release note in the relevant channel referencing the tag and the DEV-VERI
 Not tasks in this plan — reference for future work.
 
 - **Binary updates:** Tag `apple-helper-vX.Y.Z` in `itsdestin/apple-helper`. CI opens a vendor PR. Review + merge. Tag the marketplace plugin `apple-services-vA.B.C` if the helper change is user-visible.
-- **AppleScript refreshes:** Update `applescript/` files directly in a feature branch. Re-run `osascript -s o` syntax checks. Bump `apple-services` version.
+- **AppleScript refreshes:** Update `applescript/` files directly in a feature branch. Re-run `osascript -s o` (and `osascript -l JavaScript -s o` for `.jxa`) syntax checks. Bump `apple-services` version.
 - **Spec drift:** Re-read `docs/superpowers/specs/2026-04-17-apple-services-design.md` before non-trivial changes; update spec first if the change invalidates a stated invariant.
+- **macos-14 runner deprecation (Phase 0 R6 finding):** GitHub Actions' `macos-14` image begins deprecation **2026-07-06** and is fully unsupported **2026-11-02**. Before that, migrate `itsdestin/apple-helper`'s `build-and-vendor.yml` to `macos-15` (or `macos-latest` with a pinned Xcode). Minor one-line change; treat as a scheduled maintenance ticket.
+- **R3 empirical follow-up:** TCC behavior findings (display string, re-prompt on hash change, Automation attribution) are desk-research only. During DEV-VERIFICATION section D, capture empirical behavior and update the spec + this plan's release-notes language if reality differs from the desk-researched predictions.
 
 ---
 
