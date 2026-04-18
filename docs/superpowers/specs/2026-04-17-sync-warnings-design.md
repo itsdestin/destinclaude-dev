@@ -168,6 +168,12 @@ Tests live alongside existing sync tests (`youcoded/desktop/tests/sync-*.test.ts
 
 Manual verification: temporarily empty `rclone.conf`, run a sync, confirm red dot appears on gear icon, SyncPanel shows "Google Drive isn't connected" with a Reconnect button that opens SyncSetupWizard pre-targeted at the Drive backend.
 
+## Future enhancements (not in this spec)
+
+- **Per-backend account identity for reconnect copy.** The reconnect flow currently tells the user to "sign in with the same Google account you originally connected" without naming the account. A nicer UX names the account (e.g. `dest***@gmail.com`). Implementation: capture the email after a successful OAuth by running `rclone config show <remote>` to extract the access_token and calling `https://www.googleapis.com/oauth2/v1/userinfo` to resolve the email. Store as `BackendInstance.config.email`. For existing backends without the field, attempt a lookup lazily when the reconnect screen mounts; if the token is stale (typical in the CONFIG_MISSING scenario that drives reconnect), fall back to the generic "same account" copy we ship today. Migrations: none — new field is additive and missing-field-means-unknown.
+- **GitHub and iCloud failure classification.** Both currently fall through to `UNKNOWN` with raw stderr. Specific patterns (git 403/407, gh auth expired, iCloud path not mounted) should be added as those failure modes are observed in the wild.
+- **Health-check warning for rclone binary drift.** `rclone --version` output could be compared to a known-good floor and a `RCLONE_OUTDATED` warning added if the installed rclone is old enough that classifier patterns may not match. Low priority.
+
 ## Rollout
 
 - Desktop-only change; ships in the next desktop release.
