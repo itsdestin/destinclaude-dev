@@ -38,3 +38,16 @@ Both `USER_PROMPT` (chat-reducer.ts:101-141) and `TRANSCRIPT_USER_MESSAGE` (chat
 
 ### Known limitation
 Identical messages sent legitimately in quick succession can be suppressed. If this becomes a real problem, the fix requires source tagging (e.g., a flag distinguishing optimistic-from-local vs confirmed-from-transcript entries), not content comparison.
+
+## Per-turn metadata
+
+`AssistantTurn` carries four fields populated from the JSONL transcript:
+
+- `stopReason: string | null` — set only for non-`end_turn` completions (`max_tokens`, `refusal`, `stop_sequence`, `pause_turn`). Rendered inline as a footer under the affected turn; `null` means the turn completed normally. The transcript-watcher filters `tool_use` upstream; `end_turn` reaches the reducer but is filtered at the `AssistantTurnBubble` render gate (it's the normal case — no note needed).
+- `model: string | null` — Anthropic model ID (e.g. `claude-opus-4-7`). Captured on the first `TRANSCRIPT_ASSISTANT_TEXT` action (Task 2.4) and reconfirmed on `TRANSCRIPT_TURN_COMPLETE`. Drives (a) the opt-in per-turn metadata strip and (b) a reconciliation `useEffect` in App.tsx that silently updates the session-pill `sessionModels` when the transcript reveals drift (user typed `/model X` in the terminal, rate-limit downshift, session resume).
+- `usage: TurnUsage | null` — `{ inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens }` from `message.usage`. Populated on `TRANSCRIPT_TURN_COMPLETE`. Displayed only when the `showTurnMetadata` theme-context preference is on (default off — follows the "default hidden" precedent set by the derived StatusBar widgets).
+- `anthropicRequestId: string | null` — `req_…` from the transcript line's outer `requestId` field. Surfaced in `AttentionBanner` when state is `session-died` or `error` so the user can reference it when reporting issues.
+
+**Distinct from the permission-flow `requestId`** on `ToolCallState` (used by `PERMISSION_REQUEST` / `PERMISSION_RESPONSE`). The permission `requestId` is a YouCoded-internal approval-flow ID; `anthropicRequestId` is the Anthropic API request ID. Don't conflate — the distinctive name prevents silent cross-wiring.
+
+All four fields default to `null` on turn creation. The reducer's `TRANSCRIPT_TURN_COMPLETE` handler attaches metadata to the completing turn via a spread-then-override BEFORE calling `endTurn()`, because `endTurn()` doesn't touch `assistantTurns` and the override must survive the endTurn state merge.
