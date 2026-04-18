@@ -8,6 +8,7 @@ Every item here is a lesson learned the hard way or a constraint that's invisibl
 - **Desktop handlers return raw values; Android wraps in JSONObject.** The shim must normalize both to a consistent shape before React sees them.
 - **Message type strings must be identical across preload.ts, ipc-handlers.ts, and SessionService.kt.** A typo silently fails on one platform.
 - **`build-web-ui.sh` MUST run before Android APK builds** or the Android app launches with a blank WebView.
+- **When you add CC-coupled code, add an entry to `youcoded/docs/cc-dependencies.md`.** That spine doc feeds the `review-cc-changes` release agent, which maps Claude Code CHANGELOG entries to YouCoded code that might break. An omitted touchpoint silently downgrades the agent to free-reasoning-only mode for that area — don't rely on the agent to catch a coupling it doesn't know exists. Coupling includes: parsing CC output (transcript JSONL, statusline JSON), consuming a CC file (settings.json, installed_plugins.json), depending on CLI behavior (flags, exit codes, prompt text), or matching a CC text pattern (spinner glyphs, prompt markers).
 
 ## Chat Reducer
 
