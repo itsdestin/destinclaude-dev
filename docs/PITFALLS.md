@@ -54,6 +54,11 @@ Pasting multi-paragraph text into Claude Code from YouCoded exposes two stacked 
 - **Android is not affected by (B).** Termux's Linux PTY does not have a ring-buffer limit. `PtyBridge.writeInput` only implements the 600ms split for (A); it does not chunk.
 - **Bracketed paste was tried and failed historically** (commit `e54faa3`) because Windows ConPTY interferes with escape sequences. Do not reintroduce it as a "clean" alternative to chunking — the escapes arrive but the byte loss still happens inside ConPTY.
 
+## PTY Resize (Desktop Windows)
+
+- **`TerminalView.fitAndSync` must dedup on unchanged cols/rows before calling the PTY resize IPC.** Windows node-pty uses ConPTY, which reflows its visible buffer on every resize and re-emits the repainted contents to the terminal. The ResizeObserver fires for any layout shift (font load, sibling resize, 1-pixel container jitter) and `fitAddon.proposeDimensions()` frequently returns the same cell grid across ticks. Without dedup, each spurious resize causes ConPTY to re-emit Claude Code's Ink-rendered UI (banner + input bar) into xterm scrollback — so scrolling back through terminal history shows the same chunk repeated between every user message. The dedup lives as a closure (`lastCols`/`lastRows`) inside the TerminalView mount effect; keep it there, not in `session-manager.resizeSession` — the renderer owns "what dimensions should the PTY be" and main-side dedup invites confusion about ownership.
+- **Android is not affected.** Termux's Linux PTY doesn't reflow on SIGWINCH. The dedup still runs harmlessly on Android; it's a pure perf win there.
+
 ## Remote Access State Sync
 
 - **Remote clients receive chat state via `chat:hydrate` on connect — don't add parallel replay paths.** On new WebSocket auth, `remote-server.ts::replayBuffers()` calls `requestChatSnapshot(webContents)` to ask the renderer (`RemoteSnapshotExporter`) for a serialized `ChatState` snapshot, then pushes it as a single `chat:hydrate` WebSocket message to the connecting client only. The old `transcriptBuffers` replay buffer was removed because two sources of truth create ordering and dedup bugs. If you need to backfill new state types for remotes, extend `serializeChatState` / `deserializeChatState` in `chat-types.ts` — don't reintroduce a sidecar buffer.
