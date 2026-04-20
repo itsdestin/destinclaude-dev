@@ -108,11 +108,14 @@ File: `wecoded-marketplace-publisher/package.json`
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "engines": { "node": ">=20" },
   "scripts": {
-    "test": "node --test tests/"
+    "test": "node --test tests/*.test.js"
   }
 }
 ```
+
+> **Test-script note:** `node --test tests/` (directory form) is unreliable on Node 25 + Windows Git Bash. The glob form `tests/*.test.js` matches the `civic-report/` sibling convention and works everywhere.
 
 - [ ] **Step 4: Copy LICENSE from civic-report**
 
