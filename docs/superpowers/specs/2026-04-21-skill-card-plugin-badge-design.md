@@ -1,10 +1,17 @@
 ---
 title: Skill card plugin badge
 date: 2026-04-21
-status: draft
+status: superseded
+superseded_by: 2026-04-21-drawer-marketplace-polish-and-grouping-design.md
 ---
 
 # Skill card plugin badge
+
+> **Superseded.** This design was a standalone plugin-name badge on skill cards.
+> It is subsumed by the plugin-grouping work in
+> `2026-04-21-drawer-marketplace-polish-and-grouping-design.md`, where each card
+> itself becomes a plugin card and the plugin name is the card title.
+> The content below is kept for historical reference only.
 
 ## Problem
 
