@@ -100,7 +100,7 @@ No aggressive token-shape scrubbing — false positives erode trust. The editabl
 
 ### Step C — Summarize
 
-New IPC `dev:summarize-issue` → main process makes a single Anthropic API call using the user's existing Claude Code OAuth token. Prompt template:
+New IPC `dev:summarize-issue` → main process makes a single Anthropic API call using the **same OAuth token already used to spawn Claude Code sessions** — no new auth flow, no API key prompt. Prompt template:
 
 > *You are summarizing a {bug report | feature request} from a YouCoded user for a GitHub issue. The user wrote: «description». {For bugs only:} The last 200 lines of their app log are: «log». Produce: (1) a one-line title (≤80 chars), (2) a one-paragraph summary that captures the user's intent without losing specifics, (3) a `flagged_strings` array listing anything in the log that looks sensitive (paths, IDs, possible secrets) so the user can decide whether to keep them.*
 
@@ -119,14 +119,15 @@ Renderer assembles the final markdown:
 **User description:**
 {description}
 
-**Environment:** YouCoded vX.Y.Z · {platform} · {os}
+**Environment:** YouCoded vX.Y.Z · {desktop|android} · {os string}
 
 {For bugs only:}
 **Logs (last N lines):**
 <details><summary>desktop.log</summary>
 
 ```
-{redacted, possibly user-edited log tail}
+{the exact text the user sees in the editable preview at submit time —
+ redaction is applied first, then the user may further edit/scrub}
 ```
 
 </details>
@@ -162,7 +163,7 @@ Shared by the Bug "Let Claude fix it" path and the Contribute "Install Workspace
 1. **Resolve target path:** Desktop → `path.join(os.homedir(), 'youcoded-dev')`. Android → same shape, using Bootstrap's `$HOME` resolution (Termux env home dir).
 2. **Idempotency probe:** if the target dir exists, run `git -C <path> remote get-url origin`:
    - URL matches `*itsdestin/youcoded-dev*` → "already installed" path: skip clone, jump to update step
-   - URL exists but doesn't match → fail: *"`~/youcoded-dev` already exists but isn't the YouCoded dev workspace. Move or rename it and try again."* — no destructive action.
+   - URL exists but doesn't match → fail: *"`{resolved-path}` already exists but isn't the YouCoded dev workspace. Move or rename it and try again."* — error message uses the actual resolved path, not the literal `~/youcoded-dev` (matters on Android where the path lives inside the Termux env). No destructive action.
    - Dir exists, no `.git` → same fail message.
 3. **Verify git is available:** `which git` / `where git`. On Android, git is in `corePackages`. If missing on Desktop: surface install hint, abort.
 
