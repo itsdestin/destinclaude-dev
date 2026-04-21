@@ -100,7 +100,9 @@ No aggressive token-shape scrubbing — false positives erode trust. The editabl
 
 ### Step C — Summarize
 
-New IPC `dev:summarize-issue` → main process makes a single Anthropic API call using the **same OAuth token already used to spawn Claude Code sessions** — no new auth flow, no API key prompt. Prompt template:
+New IPC `dev:summarize-issue` → main process shells out to **`claude -p "<prompt>"`** (Claude Code's one-shot non-interactive mode). This reuses the existing CLI's OAuth token automatically — no new auth flow, no credential file parsing, no `cc-dependencies.md` entry. Same shell-out pattern we already use for `gh` and `git`. ~1-2s subprocess startup latency is acceptable for a once-per-bug-report flow.
+
+Prompt template:
 
 > *You are summarizing a {bug report | feature request} from a YouCoded user for a GitHub issue. The user wrote: «description». {For bugs only:} The last 200 lines of their app log are: «log». Produce: (1) a one-line title (≤80 chars), (2) a one-paragraph summary that captures the user's intent without losing specifics, (3) a `flagged_strings` array listing anything in the log that looks sensitive (paths, IDs, possible secrets) so the user can decide whether to keep them.*
 
@@ -228,8 +230,7 @@ Names must match exactly across `preload.ts`, `ipc-handlers.ts`, and `SessionSer
 
 - `desktop/src/main/preload.ts` — declare `window.claude.dev.*` (six methods)
 - `desktop/src/main/ipc-handlers.ts` — register all six handlers
-- `desktop/src/main/dev-tools.ts` *(new)* — log tail + redaction, `gh` wrapper, install pipeline
-- `desktop/src/main/dev-summarizer.ts` *(new)* — Anthropic API call, prompt template, response parsing
+- `desktop/src/main/dev-tools.ts` *(new)* — log tail + redaction, `gh` wrapper, `claude -p` summarizer wrapper, install pipeline. (Originally split into two files; consolidated since the `claude -p` shell-out is small enough not to warrant its own module.)
 - `desktop/src/main/session-manager.ts` — extend `session.create` to accept `initialInput?` (only if hook doesn't already exist; verify during planning)
 - `desktop/src/renderer/remote-shim.ts` — mirror `window.claude.dev.*` for remote browsers
 - `desktop/src/renderer/components/SettingsPanel.tsx` — add Development row in **both** the Android block (~line 1972) **and** the Desktop block (~line 2263)
@@ -331,7 +332,7 @@ Extend existing `tests/ipc-channels.test.ts` to assert all six new `dev:*` types
 
 - Live `gh issue create` calls (need a real repo + token; manual smoke instead)
 - Live `git clone` (network-dependent; manual smoke)
-- Anthropic API summarization output content (mock the API call; assert correct prompt sent + correct shape parsed; quality is a manual eval)
+- Live `claude -p` summarization output content (mock the spawn; assert correct prompt sent + correct shape parsed; quality is a manual eval)
 
 ### Manual smoke checklist (executed once before merging)
 
@@ -345,7 +346,7 @@ Extend existing `tests/ipc-channels.test.ts` to assert all six new `dev:*` types
 
 ## Open items deferred to planning
 
-- Verify whether `session.create` already supports an initial-input prefill mechanism, or whether we need to add `initialInput?` to the IPC + InputBar
-- Verify `window.claude.folders.add(path)` is idempotent
-- Confirm `gh` on Android works through the Bootstrap env without additional `linker64-env.sh` adjustments (should "just work" — verify)
-- Confirm GitHub repo `itsdestin/youcoded` has labels `bug`, `enhancement`, `youcoded-app:reported` — create if not
+- ~~Verify whether `session.create` already supports an initial-input prefill mechanism~~ — **Confirmed during planning: it does NOT.** `CreateSessionOpts` has `name, cwd, skipPermissions, cols, rows, resumeSessionId, model, provider`. We will add `initialInput?: string` and have the renderer prefill the input bar after the session-created event lands.
+- ~~Verify `window.claude.folders.add(path)` is idempotent~~ — **Confirmed during planning: yes.** `ipc-handlers.ts:709-723` deduplicates by normalized path and returns the existing entry. No wrapper needed.
+- Confirm `gh` on Android works through the Bootstrap env without additional `linker64-env.sh` adjustments (should "just work" since Bootstrap already handles the Go-binary wrapper — verify with a smoke test)
+- Confirm GitHub repo `itsdestin/youcoded` has labels `bug`, `enhancement`, `youcoded-app:reported` — create if not (manual one-time step)
