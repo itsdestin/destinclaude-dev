@@ -88,12 +88,10 @@ function shouldForwardEscToPty(params: {
   defaultPrevented: boolean;   // provider sets this if it handled the ESC
   viewMode: 'chat' | 'terminal';
   hasActiveSession: boolean;
-  buddyChatOpen: boolean;
 }): boolean {
   return !params.defaultPrevented
       && params.viewMode === 'chat'
-      && params.hasActiveSession
-      && !params.buddyChatOpen;
+      && params.hasActiveSession;
 }
 ```
 
@@ -102,7 +100,8 @@ When the guard returns true, call `window.claude.session.sendInput(activeSession
 - `defaultPrevented` comes from the KeyboardEvent itself. The provider calls `e.preventDefault()` after popping and invoking an overlay's `onClose`, so this flag is the authoritative "an overlay consumed it" signal — robust even though the stack is now empty post-pop.
 - `viewMode` comes from the existing per-session view-mode state (`App.tsx:1555`).
 - `hasActiveSession` is `!!activeSessionId`.
-- `buddyChatOpen` is read from wherever BuddyChat's open state lives (it is intentionally *not* migrated to `useEscClose` — see "BuddyChat carveout" below).
+
+**BuddyChat note:** BuddyChat renders in a **separate window** (`buddyMode === 'buddy-chat'` in App.tsx short-circuits the main tree and renders `<BuddyChatApp />` with its own React root). Its window has its own `window` object, so its ESC handler cannot collide with the main window's. No carveout is needed in the guard.
 
 **Listener ordering:** the provider registers in **capture phase**, the passthrough registers in **bubble phase**. Capture runs before bubble in the DOM event model, so the provider always gets first dibs on ESC. If the provider handles it (stack non-empty), it calls `preventDefault()`. The passthrough then sees `defaultPrevented === true` and returns. If the stack was empty at the time of the event, the provider is a no-op and `defaultPrevented` stays false, so the passthrough proceeds.
 
@@ -175,17 +174,7 @@ keydown(Escape)
 - **Interrupt during tool approval dialog** → the `for tool use` variant routes through the same reducer handler. `endTurn()` flips the awaiting-approval tool to `failed` with error `'Turn interrupted'`; existing UI renders this via its normal tool-failure path.
 - **Remote browsers** → inherit the feature for free. Same React UI, same `window.claude.session.sendInput` shim over WebSocket, same `transcript-watcher` on the desktop host broadcasting via `chat:hydrate` + live events.
 - **User types the literal string `[Request interrupted by user]`** → treated as interrupt. Acceptable false-positive: the string is rare enough in organic user text that distinguishing it would require fragile heuristics (no UUID or flag differentiates it in the transcript). Documented as a known edge.
-
-## BuddyChat carveout
-
-BuddyChat uses ESC as an **open/close toggle**, not close-only. It does not fit the `useEscClose` model. Keep its existing direct listener unchanged. The chat-passthrough guard explicitly checks `!buddyChatOpen` so ESC with BuddyChat open doesn't also fire the PTY interrupt. Annotate the guard with a WHY comment:
-
-```ts
-// BuddyChat uses ESC as a toggle, not close-only — skip PTY interrupt when it's open
-// so a single ESC doesn't both toggle buddy and interrupt Claude.
-```
-
-If BuddyChat ever moves to a different keybinding for toggle, delete the carveout and remove the parameter.
+- **BuddyChat window is out of scope.** BuddyChat runs as a separate window with its own React root (`BuddyChatApp`). Its ESC handler continues to toggle buddy visibility as today. A separate follow-up could mirror this feature inside the buddy window if desired; not part of this spec.
 
 ## Migration of existing overlays
 
@@ -232,7 +221,7 @@ Add one entry to `docs/PITFALLS.md` under a new section "Keyboard Routing" (or a
 - `onClose` identity changes across re-renders: latest `onClose` called, not stale.
 - `useEscStackEmpty()` returns true initially, false while open, true after close.
 
-**`shouldForwardEscToPty.test.ts`** — pure function truth table: all 16 combinations of the 4 booleans.
+**`shouldForwardEscToPty.test.ts`** — pure function truth table over 3 booleans (8 combinations), plus `viewMode === 'terminal'` case.
 
 **`transcript-watcher.test.ts`** (extend existing):
 - User message with exactly `[Request interrupted by user]` → emits `TRANSCRIPT_INTERRUPT { kind: 'plain' }`, does NOT emit `TRANSCRIPT_USER_MESSAGE`.
