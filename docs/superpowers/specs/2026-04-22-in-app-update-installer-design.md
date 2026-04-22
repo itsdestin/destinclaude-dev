@@ -23,14 +23,13 @@ Replace the browser-open behavior of the update-panel popup's "Update Now" butto
 
 ## Architecture
 
-One new main-process module `update-installer.ts` owns the full download-and-launch lifecycle. It exposes six IPC channels (parity rules apply — see `docs/shared-ui-architecture.md`):
+One new main-process module `update-installer.ts` owns the full download-and-launch lifecycle. It exposes five IPC channels (parity rules apply — see `docs/shared-ui-architecture.md`):
 
-- **`update:download`** (request-response) — start download of the current `updateStatus.download_url`. Returns `{ jobId, filePath, bytesTotal }`. Idempotent: if a job is already in flight, returns the existing jobId.
+- **`update:download`** (request-response) — start download of the current `cachedUpdateStatus.download_url`. Returns `{ jobId, filePath, bytesTotal }`. Idempotent: if a job is already in flight, returns the existing jobId. Internally branches on the dev fake-update flag (see "Testing → `YOUCODED_DEV_FAKE_UPDATE` extension").
 - **`update:cancel`** (request-response) — abort the download for a jobId, delete the partial file.
-- **`update:launch`** (request-response) — spawn the platform installer for a completed jobId, then `app.quit()` 500 ms later. Returns `{ success: true }` on successful spawn, or `{ success: false, error: '<code>' }` on spawn error (no quit).
+- **`update:launch`** (request-response) — launch the platform installer for a completed jobId. Returns `{ success: true, quitPending: true }` when the installer was spawned and `app.quit()` is scheduled, `{ success: true, quitPending: false, fallback: 'browser' }` when the platform falls back to `shell.openExternal` and the app should stay running (Linux `.deb`, missing-`APPIMAGE` case), or `{ success: false, error: '<code>' }` on spawn error (no quit, no fallback).
 - **`update:progress`** (push event, main → renderer) — `{ jobId, bytesReceived, bytesTotal, percent }`. Emitted at most every 250 ms or every 5 % boundary, whichever comes first.
 - **`update:get-cached-download`** (request-response) — returns `{ filePath, version } | null`. Used when the user reopens the popup and a completed download is still in cache for the current `updateStatus.latest` version.
-- **`update:dev-fake-ready`** (request-response) — dev-only helper for the `YOUCODED_DEV_FAKE_UPDATE` test flow. No-op in packaged builds.
 
 The renderer's `UpdatePanel.tsx` owns a small local state machine (`idle → downloading → ready → launching | error`). The morphing "Update Now / Downloading X % / Launch Installer / Retry" button is driven entirely by that state.
 
@@ -42,16 +41,16 @@ The renderer's `UpdatePanel.tsx` owns a small local state machine (`idle → dow
 - `desktop/src/main/__tests__/update-installer.test.ts` — unit tests (download, cancel, launch, error paths).
 - `desktop/src/main/__tests__/update-install-ipc.test.ts` — parity test (extends pattern from the `update:changelog` parity test already in `feat/update-panel-popup`).
 - `desktop/src/shared/update-install-types.ts` — shared types (`UpdateJob`, `UpdateProgress`, `UpdateError`, error code enum). Consumed by preload, renderer, and the main module.
-- `app/src/main/kotlin/com/youcoded/app/runtime/UpdateInstallerStub.kt` — Kotlin stubs for all six message types, all returning `{ success: false, error: 'not-supported' }`.
+- `app/src/main/kotlin/com/youcoded/app/runtime/UpdateInstallerStub.kt` — Kotlin stubs for all five message types, all returning `{ success: false, error: 'not-supported' }`.
 
 ### Modified files
 
-- `desktop/src/main/ipc-handlers.ts` — register the six new IPC handlers. Hold a per-session subscriber map for progress push events.
+- `desktop/src/main/ipc-handlers.ts` — register the five new IPC handlers. Hold a per-session subscriber map for progress push events.
 - `desktop/src/main/preload.ts` — expose `window.claude.update.{ download, cancel, launch, onProgress, getCachedDownload }`. `onProgress` returns an unsubscribe function (standard pattern already used elsewhere in preload).
 - `desktop/src/renderer/remote-shim.ts` — same shape for parity. Remote-browser clients receive stub implementations returning `{ success: false, error: 'remote-unsupported' }` — you cannot install a desktop binary from a browser into the desktop session.
 - `desktop/src/renderer/components/UpdatePanel.tsx` — rewrite `handleUpdate`, add local state machine for button morphing and progress display. Subscribe to `onProgress` in a `useEffect`.
 - `desktop/src/main/main.ts` — call `cleanupStaleDownloads()` on `app.whenReady()`.
-- `app/src/main/kotlin/com/youcoded/app/runtime/SessionService.kt` — wire the six `when` cases in `handleBridgeMessage()` to `UpdateInstallerStub`.
+- `app/src/main/kotlin/com/youcoded/app/runtime/SessionService.kt` — wire the five `when` cases in `handleBridgeMessage()` to `UpdateInstallerStub`.
 
 ## Data flow
 
@@ -112,7 +111,7 @@ child.unref();
 
 - NSIS handles its own UAC elevation prompt.
 - Child process is not linked to our job object, so `app.quit()` does not kill it.
-- NSIS installer displays a "Launch YouCoded" checkbox at the end — relies on electron-builder's default `oneClick: false, allowToChangeInstallationDirectory: false` config. **Implementation task: verify this in `electron-builder.yml` and document if anything needs tweaking.**
+- NSIS installer displays a "Launch YouCoded" checkbox at the end — relies on electron-builder's default `oneClick: false, allowToChangeInstallationDirectory: false` config. **Implementation task: verify this in the electron-builder config (either `electron-builder.yml` or the `build` field inside `desktop/package.json`) and document if anything needs tweaking.**
 - **No code signing today.** SmartScreen may nag on unsigned `.exe` — same as today's browser flow. When a code-signing cert is added later, zero changes needed on the installer side (build-time concern only).
 
 ### macOS (`.dmg`)
@@ -140,49 +139,69 @@ child.unref();
 ```ts
 const appImagePath = process.env.APPIMAGE; // path of running AppImage
 if (!appImagePath || !fs.existsSync(appImagePath)) {
-  throw new InstallError('appimage-not-detected'); // triggers browser fallback
+  // Graceful fallback — not an error. App stays running, user installs manually.
+  shell.openExternal(cachedUpdateStatus.download_url);
+  return { success: true, quitPending: false, fallback: 'browser' };
 }
 fs.chmodSync(downloadedPath, 0o755);
-fs.renameSync(downloadedPath, appImagePath); // must be same filesystem
+try {
+  fs.renameSync(downloadedPath, appImagePath); // must be same filesystem
+} catch (e) {
+  if (e.code === 'EXDEV') {
+    // Cross-filesystem — copy + unlink instead
+    fs.copyFileSync(downloadedPath, appImagePath);
+    fs.unlinkSync(downloadedPath);
+  } else if (e.code === 'EACCES' || e.code === 'EPERM') {
+    throw new InstallError('appimage-not-writable');
+  } else {
+    throw e;
+  }
+}
 app.relaunch();
 app.quit();
 ```
 
 - Linux kernel allows replacing an open file; the running process keeps its old inode until exit.
-- `fs.renameSync` is atomic within the same filesystem. If it fails with `EXDEV` (cross-filesystem), fall back to copy + unlink + relaunch.
-- No elevation required.
+- `fs.renameSync` is atomic within the same filesystem. `EXDEV` (cross-filesystem) handled by copy + unlink.
+- `EACCES` / `EPERM` (AppImage lives in a root-owned location, e.g. `/opt`) surfaces as `appimage-not-writable` — the error state shows the usual Retry + browser fallback. Same net UX as today's browser flow, which also requires the user to manually replace the binary.
+- No elevation required for the happy path (user-owned AppImage).
 
 ### Linux .deb fallback
 
 ```ts
 shell.openExternal(cachedUpdateStatus.download_url);
+return { success: true, quitPending: false, fallback: 'browser' };
 // Popup copy: "Debian package — install manually with `sudo dpkg -i <file>`."
 ```
 
-- Same as current behavior. Flagged in popup copy so the user understands why this specific path differs.
+- Same as current behavior. Popup closes; the app stays running while the user installs the .deb from their browser's download UI. Flagged in popup copy so the user understands why this specific path differs.
 
 ### Error → fallback chain (all platforms)
 
 ```
 launchInstaller error
-  → renderer state: error(code, downloadUrl)
+  → renderer state: error(code)
   → button: "Launch failed — Retry"
   → secondary link: "Open in browser instead"
-      → window.claude.shell.openExternal(cachedUpdateStatus.download_url)
+      → window.claude.shell.openExternal(updateStatus.download_url)
       → onClose()
 ```
+
+(The renderer has `updateStatus.download_url` directly in its props — no extra round-trip to main.)
 
 Error codes (enumerated in `update-install-types.ts`):
 
 - `spawn-failed` — `spawn()` threw or child exited non-zero within 2 s
 - `file-missing` — the download file does not exist on disk
-- `appimage-not-detected` — running outside an AppImage (rare, dev only)
+- `appimage-not-writable` — `EACCES` / `EPERM` replacing a root-owned AppImage
 - `dmg-corrupt` — `open -W` exited with non-zero (macOS)
 - `unsupported-platform` — platform/arch combination we don't handle
 - `remote-unsupported` — attempted from a remote-browser session
 - `network-failed` — download failed mid-stream
 - `disk-full` — `ENOSPC` during write
 - `url-rejected` — failed HTTPS / domain allowlist check (security)
+
+(Note: `appimage-not-detected` and `.deb` are **not** errors — they short-circuit to `fallback: 'browser'` with `shell.openExternal` and a transient popup close. The app keeps running. See platform mechanics above.)
 
 ## Security
 
@@ -231,7 +250,7 @@ Also: closing the update popup mid-download triggers `update:cancel` on the acti
 - On spawn error, `launchInstaller` surfaces the error instead of quitting.
 - `cleanupStaleDownloads` deletes `.partial` files and files older than 24 h; leaves fresh files.
 
-**`update-install-ipc.test.ts`** — parity check (extends the `update:changelog` parity test already on `feat/update-panel-popup`). Asserts all six new message types appear in `preload.ts`, `remote-shim.ts`, `ipc-handlers.ts`, and the Android stub.
+**`update-install-ipc.test.ts`** — parity check (extends the `update:changelog` parity test already on `feat/update-panel-popup`). Asserts all five new message types (`update:download`, `update:cancel`, `update:launch`, `update:progress`, `update:get-cached-download`) appear in `preload.ts`, `remote-shim.ts`, `ipc-handlers.ts`, and the Android stub.
 
 Mock the network with `undici`'s `MockAgent` or a local HTTPS server. Tests do not hit real GitHub.
 
