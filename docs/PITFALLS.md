@@ -98,6 +98,12 @@ Pasting multi-paragraph text into Claude Code from YouCoded exposes two stacked 
 - **SessionStrip dropdown at `z-[9000]` is load-bearing.** `.header-bar`'s `backdrop-filter` creates a stacking context that traps lower values. Don't "fix" it.
 - **Glassmorphism is automatic and var-driven.** `.layer-surface` reads `--panels-blur` / `--panels-opacity` directly (always set by theme-engine, defaults `0px` / `1`). No `[data-panels-blur]` attribute gate exists — blur and opacity are independent knobs. Reduced-effects forces `--panels-blur: 0` but preserves the user's opacity intent. No per-component handling required.
 
+## Keyboard Routing
+
+- **ESC handling flows through `useEscClose` stack → chat-passthrough guard.** The stack's capture-phase listener (in `EscCloseProvider`, mounted at App root) pops the top overlay and calls `preventDefault()`; the App-level bubble-phase listener reads `defaultPrevented` to decide whether to forward `\x1b` to the active session's PTY. Do NOT add parallel window-level ESC listeners on overlays — they break LIFO ordering and can race the chat-passthrough. Exception: **xterm's terminal view** still forwards ESC natively via node-pty when the terminal pane is focused; the chat-passthrough listener explicitly returns when `viewMode === 'terminal'` to avoid a double-send. The buddy window has its own React root and its own `window`, so its ESC handler does not compete with the main window's.
+- **Chat-to-PTY interrupt is single-byte — no chunking applies.** `window.claude.session.sendInput(sessionId, '\x1b')` sends 1 byte. Ink's 500ms PASTE_TIMEOUT applies only to writes ≥2 chars — see "PTY Writes" above for why multi-byte writes ending in `\r` require pacing. Don't mistakenly wrap the single ESC in the paste-splitter workaround.
+- **Interrupt markers in the transcript end the turn in the reducer.** `transcript-watcher.ts` detects `[Request interrupted by user]` and `[Request interrupted by user for tool use]` in user messages (exact match only) and emits `user-interrupt` events instead of `user-message`. The reducer's `TRANSCRIPT_INTERRUPT` handler attaches `stopReason: 'interrupted'` to the in-flight turn and calls `endTurn(session, 'Turn interrupted')`. Don't "simplify" either by removing the interception — the marker would then render as a user bubble and in-flight tools would stay `running` forever.
+
 ## Cloudflare Workers (Marketplace Backend)
 
 Gotchas discovered shipping `wecoded-marketplace/worker/` — the Cloudflare Worker backing marketplace install counts and ratings.
