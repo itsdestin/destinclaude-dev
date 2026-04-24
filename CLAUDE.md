@@ -73,6 +73,10 @@ bash scripts/run-dev.sh
 
 This shifts every port youcoded uses (Vite 5173 → 5223, remote server 9900 → 9950) and splits Electron `userData` into a separate dir so the dev instance coexists with a running built app. See `docs/local-dev.md` for what's isolated, what's shared (`~/.claude/`), and the caveats.
 
+### ToolCard sandbox
+
+When iterating on `ToolCard` / `ToolBody` view designs in the renderer, skip the live-session loop by running `bash scripts/run-sandbox.sh`. It launches the same dev instance as `run-dev.sh` but boots the Electron window directly into `?mode=tool-sandbox`, where every `.jsonl` fixture in `youcoded/desktop/src/renderer/dev/fixtures/` renders as a real `<ToolCard>`. Edit `ToolBody.tsx` view functions and Vite HMR updates the page within ~1 second. Only touches the renderer; no PTY or transcript side effects.
+
 For Claude sessions that need to verify code compiles or run tests locally:
 
 ```bash
