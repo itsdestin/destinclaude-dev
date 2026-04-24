@@ -62,3 +62,9 @@ CHANGELOG entry: "v2.1.117: The `cleanupPeriodDays` retention sweep now also cov
 - **Priority**: medium (next Go-binary integration will re-hit this silently; the fix pattern is non-obvious without docs)
 
 > **D1–D8 resolved on 2026-04-23.** Full details and applied fixes in `docs/AUDIT.md`. One follow-up: the D4 edit to `youcoded/.claude/rules/android-runtime.md` still needs to be committed + pushed in the youcoded repo.
+
+## Analytics payload ↔ privacy copy must stay in sync (noticed 2026-04-24)
+- **Claim**: Three surfaces each enumerate exactly what the analytics ping contains — the in-app Privacy section in `AboutPopup.tsx` (desktop + android branches), the landing-page FAQ in `youcoded/docs/index.html` ("Is my data private?"), and the spec at `docs/superpowers/specs/2026-04-23-privacy-analytics-design.md`. All three currently list: random install ID, app version, platform (+ OS on desktop), country.
+- **Actual**: The authoritative list of fields is `AppEventPayload` in `wecoded-marketplace/worker/src/lib/analytics.ts`, with the client payloads constructed in `youcoded/desktop/src/main/analytics-service.ts` and `youcoded/app/src/main/kotlin/com/youcoded/app/analytics/AnalyticsService.kt`. If someone adds or renames a field in any of those three code sites without updating the three copy surfaces, the Privacy promise drifts from the code and user trust erodes silently.
+- **Fix**: Every change that touches `AppEventPayload` shape, the desktop `payload` object, or the Android `payload` JSON must include matching edits to (a) `AboutPopup.tsx` (both platform branches), (b) the FAQ answer for "Is my data private?" in `youcoded/docs/index.html`, and (c) the three "Final copy" sections in the privacy-analytics spec. Run `/audit analytics` before shipping any change in this area.
+- **Priority**: medium (silent drift risk; the worst outcome is claiming we don't collect something we do)
