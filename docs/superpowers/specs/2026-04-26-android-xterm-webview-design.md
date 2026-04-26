@@ -55,7 +55,7 @@ No change. The patched `RawByteListener` is still load-bearing: it is the source
 - **Typed input:** flows through `InputBar` (`minimal` mode `<textarea>`) → `sendInput(text + '\r')` → PTY. Native Android IME (GBoard, Samsung keyboard, etc.) interacts with the textarea, never with xterm. The historical xterm.js mobile IME risk (issue #2403) does not apply to our use case.
 - **Special keys:** `TerminalToolbar` (Esc/Tab/Ctrl/←/→) and `TerminalScrollButtons` (↑/↓) continue to dispatch escape sequences via `sendInput`.
 - **Auto-scroll on output:** xterm's default `scrollOnUserInput: true` handles it.
-- **Font size:** 12px constant on Android (touch platforms), 15px on desktop. One-line tweak if dogfooding shows it's wrong.
+- **Font size:** 12px constant on Android (touch platforms), 14px on desktop (current value, unchanged). One-line tweak if dogfooding shows the 12px touch value is wrong.
 - **WebGL renderer:** kept on Android. The existing `WebglAddon` `onContextLoss` recovery falls back to xterm's canvas renderer if WebGL fails to attach. If even canvas is sluggish during dogfood, that triggers a revert.
 
 ### Explicitly NOT in scope
