@@ -13,6 +13,15 @@ wecoded-marketplace/
 *-decoupling/
 *-sessions/
 
+# Skill runtime state (brainstorming/writing-plans session dirs etc).
+# Contain ephemeral working notes from skill invocations and don't carry
+# value across machines.
+.superpowers/
+
+# Ad-hoc scratch dir occasionally used for files we don't want to track.
+# If something proves useful, promote it to scripts/ or docs/.
+scratch/
+
 # Auto-title artifacts
 .auto-title
 .auto-title-audit.tmp

@@ -283,7 +283,7 @@ git commit -m "feat(tasks): parse TaskList response for authoritative snapshots"
 
 ## Task 3: Extend `TaskState` and `buildTasksById`
 
-**Goal:** Wire the parsers into the task derivation. Add `activeForm` and `createdAt` fields. Make TaskCreate-only tasks appear. Make TaskList snapshots overwrite stale status.
+**Goal:** Wire the parsers into the task derivation. Add `activeForm` and `orderIndex` fields. Make TaskCreate-only tasks appear. Make TaskList snapshots overwrite stale status.
 
 **Files:**
 - Modify: `desktop/src/renderer/state/task-state.ts`
@@ -322,7 +322,7 @@ describe('buildTasksById (extended)', () => {
     expect(task!.subject).toBe('Do the thing');
     expect(task!.description).toBe('Detail');
     expect(task!.activeForm).toBe('Doing the thing');
-    expect(task!.createdAt).toBe(0);
+    expect(task!.orderIndex).toBe(0);
     expect(task!.status).toBeUndefined();
   });
 
@@ -362,7 +362,7 @@ describe('buildTasksById (extended)', () => {
     expect(task!.status).toBe('pending');
   });
 
-  it('sets createdAt from the first toolCalls index the task appears at', () => {
+  it('sets orderIndex from the first toolCalls index the task appears at', () => {
     const toolCalls = new Map<string, ToolCallState>();
     toolCalls.set('a', makeCall({
       toolUseId: 'a', toolName: 'Bash', input: { command: 'ls' },
@@ -377,7 +377,7 @@ describe('buildTasksById (extended)', () => {
     }));
 
     const task = buildTasksById(toolCalls).get('3');
-    expect(task!.createdAt).toBe(1);
+    expect(task!.orderIndex).toBe(1);
   });
 
   it('tolerates unknown input keys without throwing', () => {
@@ -399,7 +399,7 @@ describe('buildTasksById (extended)', () => {
 cd desktop && npx vitest run src/renderer/state/task-state.test.ts
 ```
 
-Expected: FAIL — the `buildTasksById (extended)` block fails because the current implementation doesn't use parsers, doesn't set `activeForm` or `createdAt`, and doesn't handle TaskList snapshots.
+Expected: FAIL — the `buildTasksById (extended)` block fails because the current implementation doesn't use parsers, doesn't set `activeForm` or `orderIndex`, and doesn't handle TaskList snapshots.
 
 - [ ] **Step 3: Extend the `TaskState` interface**
 
@@ -414,7 +414,7 @@ export interface TaskState {
   priority?: string;
   status?: TaskStatus;
   /** Insertion index in toolCalls where this task first appeared — sort key. */
-  createdAt?: number;
+  orderIndex?: number;
   /** Events in chronological order (insertion order of toolCalls Map). */
   events: TaskEvent[];
   /** User-flagged-inactive in the UI. View-model only; not derived from tool calls. */
@@ -436,7 +436,7 @@ Replace the existing `buildTasksById` function body with:
 export function buildTasksById(toolCalls: Map<string, ToolCallState>): Map<string, TaskState> {
   const tasks = new Map<string, TaskState>();
 
-  // Scan in insertion order. `idx` gives us stable createdAt values.
+  // Scan in insertion order. `idx` gives us stable orderIndex values.
   let idx = 0;
   for (const tool of toolCalls.values()) {
     const i = idx++;
@@ -446,7 +446,7 @@ export function buildTasksById(toolCalls: Map<string, ToolCallState>): Map<strin
     // --- TaskList: authoritative snapshot, overwrites current tasks ---
     if (tool.toolName === 'TaskList' && typeof tool.response === 'string') {
       for (const row of parseTaskListResult(tool.response)) {
-        const existing = tasks.get(row.id) || { id: row.id, events: [], createdAt: i };
+        const existing = tasks.get(row.id) || { id: row.id, events: [], orderIndex: i };
         tasks.set(row.id, {
           ...existing,
           subject: row.subject ?? existing.subject,
@@ -470,7 +470,7 @@ export function buildTasksById(toolCalls: Map<string, ToolCallState>): Map<strin
     }
     if (!taskId) continue;
 
-    const existing = tasks.get(taskId) || { id: taskId, events: [], createdAt: i };
+    const existing = tasks.get(taskId) || { id: taskId, events: [], orderIndex: i };
     const status = input.status as TaskStatus | undefined;
 
     const event: TaskEvent = {
@@ -528,7 +528,7 @@ Expected: no existing test fails because of these changes. If `chat-reducer.test
 
 ```bash
 git add desktop/src/renderer/state/task-state.ts desktop/src/renderer/state/task-state.test.ts
-git commit -m "feat(tasks): extend TaskState with activeForm+createdAt; wire parsers into buildTasksById"
+git commit -m "feat(tasks): extend TaskState with activeForm+orderIndex; wire parsers into buildTasksById"
 ```
 
 ---
@@ -765,13 +765,13 @@ export function useSessionTasks(sessionId: string) {
   // Derive tasks from the session's toolCalls (memoized on the Map ref).
   const derived = useMemo(() => buildTasksById(session.toolCalls), [session.toolCalls]);
 
-  // Overlay markedInactive and sort by createdAt ascending (undefined sorts last).
+  // Overlay markedInactive and sort by orderIndex ascending.
   const tasks = useMemo<TaskState[]>(() => {
     const out: TaskState[] = [];
     for (const t of derived.values()) {
       out.push({ ...t, markedInactive: sessionInactive.has(t.id) });
     }
-    out.sort((a, b) => (a.createdAt ?? Infinity) - (b.createdAt ?? Infinity));
+    out.sort((a, b) => a.orderIndex - b.orderIndex);
     return out;
   }, [derived, sessionInactive]);
 
@@ -1040,9 +1040,9 @@ describe('OpenTasksPopup', () => {
       <OpenTasksPopup
         open={true}
         tasks={[
-          task({ id: '1', subject: 'Done thing', status: 'completed', createdAt: 0 }),
-          task({ id: '2', subject: 'Running thing', status: 'in_progress', activeForm: 'Running', createdAt: 1 }),
-          task({ id: '3', subject: 'Queued thing', status: 'pending', createdAt: 2 }),
+          task({ id: '1', subject: 'Done thing', status: 'completed', orderIndex: 0 }),
+          task({ id: '2', subject: 'Running thing', status: 'in_progress', activeForm: 'Running', orderIndex: 1 }),
+          task({ id: '3', subject: 'Queued thing', status: 'pending', orderIndex: 2 }),
         ]}
         onClose={noop}
         onMarkInactive={noop}
@@ -1118,7 +1118,7 @@ describe('OpenTasksPopup', () => {
 
   it('fires onClose when scrim is clicked', () => {
     const onClose = vi.fn();
-    render(
+    const { container } = render(
       <OpenTasksPopup
         open={true}
         tasks={[task({ id: '1', subject: 'X', status: 'pending' })]}
@@ -1127,7 +1127,11 @@ describe('OpenTasksPopup', () => {
         onUnhide={noop}
       />
     );
-    fireEvent.click(screen.getByTestId('open-tasks-scrim'));
+    // Scrim primitive does not forward arbitrary props, so find it by its
+    // theme-driven class name rather than a test id.
+    const scrim = container.querySelector('.layer-scrim');
+    expect(scrim).toBeTruthy();
+    fireEvent.click(scrim!);
     expect(onClose).toHaveBeenCalled();
   });
 });
@@ -1152,7 +1156,7 @@ import type { TaskState } from '../state/task-state';
 
 interface Props {
   open: boolean;
-  tasks: TaskState[];                      // pre-sorted by createdAt ascending
+  tasks: TaskState[];                      // pre-sorted by orderIndex ascending
   onClose: () => void;
   onMarkInactive: (taskId: string) => void;
   onUnhide: (taskId: string) => void;
@@ -1249,7 +1253,7 @@ export default function OpenTasksPopup({ open, tasks, onClose, onMarkInactive, o
 
   return (
     <>
-      <Scrim layer={2} onClick={onClose} data-testid="open-tasks-scrim" />
+      <Scrim layer={2} onClick={onClose} />
       <OverlayPanel
         layer={2}
         className="fixed right-3 bottom-8 w-[420px] max-w-[calc(100vw-1.5rem)] max-h-[70vh] overflow-auto rounded-md"

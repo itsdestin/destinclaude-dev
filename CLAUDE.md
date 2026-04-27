@@ -6,7 +6,14 @@ Workspace guidance for Claude Code. Subsystem details live in `docs/` and `.clau
 
 **On first session**, run `bash setup.sh` from the project root to clone all repos. On subsequent sessions, run it again to pull the latest from each repo's default branch. Do this before any other work.
 
-**All pushes and PRs go to the relevant sub-repo** (e.g., `youcoded/`, `youcoded-core/`), never to the `youcoded-dev` repo itself. This repo is only the workspace scaffold.
+**Sub-repo code changes go to the relevant sub-repo** (e.g., `youcoded/`, `youcoded-core/`, `wecoded-themes/`, `wecoded-marketplace/`) — open PRs there, push there. Do NOT mix sub-repo code into the workspace repo (`youcoded-dev`).
+
+**Workspace-level artifacts DO get committed + pushed to `youcoded-dev`.** That includes:
+- Cross-cutting docs that span multiple sub-repos: `docs/PITFALLS.md`, `docs/android-runtime.md`, `docs/chat-reducer.md`, `docs/shared-ui-architecture.md`, `docs/registries.md`, `docs/build-and-release.md`, `docs/knowledge-debt.md`, etc.
+- This `CLAUDE.md` and any rule files under `.claude/rules/`.
+- Specs / plans / investigations under `docs/superpowers/` (the artifacts produced by brainstorming, writing-plans, and similar skills before any sub-repo code changes).
+- Dev tooling under `scripts/` — `run-dev.sh`, `run-sandbox.sh`, `cdp-eval.mjs`, etc.
+- The workspace's own `.gitignore`, `setup.sh`, and skill marketplace pointers under `.claude/`.
 
 ## About This Project
 
@@ -76,6 +83,19 @@ This shifts every port youcoded uses (Vite 5173 → 5223, remote server 9900 →
 ### ToolCard sandbox
 
 When iterating on `ToolCard` / `ToolBody` view designs in the renderer, skip the live-session loop by running `bash scripts/run-sandbox.sh`. It launches the same dev instance as `run-dev.sh` but boots the Electron window directly into `?mode=tool-sandbox`, where every `.jsonl` fixture in `youcoded/desktop/src/renderer/dev/fixtures/` renders as a real `<ToolCard>`. Edit `ToolBody.tsx` view functions and Vite HMR updates the page within ~1 second. Only touches the renderer; no PTY or transcript side effects.
+
+### CDP eval (live renderer inspection)
+
+`scripts/cdp-eval.mjs` is a one-shot Chrome DevTools Protocol eval helper. Use it to inspect or poke a live React renderer — most often the Android WebView while a debug APK is running on a device. Header comment in the script has the full adb-forward + page-discovery recipe; the short form:
+
+```bash
+adb shell ps -A | grep com.youcoded            # find the dev or release PID
+adb forward tcp:9222 localabstract:webview_devtools_remote_<PID>
+curl -s http://localhost:9222/json             # copy webSocketDebuggerUrl
+node scripts/cdp-eval.mjs '<wsUrl>' "(() => ({ url: location.href, vm: document.documentElement.dataset.viewMode }))()"
+```
+
+Used during the Tier 2 android-xterm-webview dogfood pass to read xterm scrollback live, trace the byte stream into `terminal.write`, and pinpoint the visible black gap above the InputBar without rebuilding.
 
 For Claude sessions that need to verify code compiles or run tests locally:
 
