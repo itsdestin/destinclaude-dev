@@ -4,10 +4,12 @@ Release builds happen through GitHub Actions CI in the relevant sub-repo. Day-to
 
 ## Build order dependencies
 
-### `build-web-ui.sh` MUST run before Android APK builds
-Located at `youcoded/scripts/build-web-ui.sh`. Runs `npm ci && npm run build` in `desktop/`, then copies `desktop/dist/renderer/` into `app/src/main/assets/web/`. If skipped, the Android app launches with a blank WebView.
+### React UI bundle is auto-rebuilt by Gradle
+Located at `youcoded/scripts/build-web-ui.sh`. Runs `npm ci && npm run build` in `desktop/`, then copies `desktop/dist/renderer/` into `app/src/main/assets/web/`. The `bundleWebUi` task in `app/build.gradle.kts` invokes this script before `preBuild` whenever any input changes (`desktop/src/`, `package-lock.json`, `vite.config.ts`, etc.). Kotlin-only iterations are skipped as UP-TO-DATE.
 
-The Android release workflow (`android-release.yml:35`) invokes this before `./gradlew assembleRelease bundleRelease`.
+If skipped (manual `-x bundleWebUi`, build break in `npm run build`, etc.), the Android app launches with a blank WebView — `index.html` references JS/CSS bundles that aren't in `assets/web/assets/`.
+
+The Android release workflow (`android-release.yml`) still invokes the script as an explicit pre-step. With the Gradle task in place that's redundant on cold-cache CI runs (Gradle re-runs the work) but harmless, and acts as a safety net if anyone disables the Gradle task.
 
 ### Desktop version comes from git tag, not package.json
 CI extracts version from the `vX.Y.Z` tag and patches `package.json` before building (`desktop-release.yml:40-46`). Local `package.json` version is not the source of truth.
