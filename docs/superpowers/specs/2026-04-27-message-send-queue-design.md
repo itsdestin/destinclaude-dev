@@ -21,7 +21,8 @@ This work also unifies desktop and Android by porting the desktop `pty-worker.js
 ## Decisions
 
 - **Queue is YouCoded-managed (Approach B from brainstorm).** We own the queue; CC's input bar is only written to when our gate opens (or when force-send bypasses the gate).
-- **Force-send is supported.** Per-item button on a queued bubble (and a "send now" affordance from InputBar). Force bypasses gate and pause; gray-pending styling + tooltip ("Claude has not yet seen this message") signals uncertainty until transcript confirms.
+- **Force-send is "interrupt then send."** Per-item button on a queued bubble (and a "send now" affordance from InputBar). Force always sends `\x1b` first, waits for CC to return to idle, then writes the message. This sidesteps the paste-classification race entirely because CC is idle by the time we write the body. Force-send bypasses the queue gate and the global pause, but is **disabled while a permission/approval prompt is open** — sending `\x1b` to a permission prompt would deny it, conflating chat send with permission decision.
+- **Gray-pending styling on force-sent messages.** Tooltip "Claude has not yet seen this message" persists until transcript confirms.
 - **Inline ghost bubbles in the chat timeline.** Queue is rendered as additional bubbles after confirmed/pending messages, in queue order. No separate strip or modal.
 - **Operations supported:** edit-in-place, drag-reorder, cancel (X button) for queued items.
 - **Esc auto-pauses.** Esc still interrupts the current turn AND sets the queue to paused with reason `'esc-interrupt'`. User must explicitly unpause to resume.
@@ -64,7 +65,7 @@ A new `failed?: boolean` flag drives the post-60s "Claude may not have received 
 |--------|---------|
 | `QUEUE_ENQUEUE` | Append `{ text, attachments }` to `queue`. |
 | `QUEUE_RELEASE_HEAD` | Move head item out of `queue`, append to `messages` with `pending: true, forceSend: false`. |
-| `QUEUE_FORCE_SEND` | From queue (id) or InputBar (text): append to `messages` with `pending: true, forceSend: true`; remove from queue if applicable. |
+| `QUEUE_FORCE_SEND` | From queue (id) or InputBar (text): append to `messages` with `pending: true, forceSend: true, awaitingInterrupt: true`; remove from queue if applicable. Triggers the interrupt-then-send coordinator. No-op if `permissionPending`. |
 | `QUEUE_EDIT` | Update `text` on matching id in `queue`. No-op if not in queue. |
 | `QUEUE_REORDER` | Move queued item to new index. No-op on items with `releasing: true`. |
 | `QUEUE_REMOVE` | Delete from queue. No-op on missing or releasing items. |
@@ -94,9 +95,19 @@ When `canRelease`:
 
 The release moves the bubble from queued styling (dotted border, queue badge, controls) to standard `pending: true` styling. From there the existing transcript-confirm flow takes over: pty-worker echo-driven submit fires, CC processes, `TRANSCRIPT_USER_MESSAGE` arrives, reducer matches oldest pending entry by content, clears `pending` flag.
 
-### Force-send — direct path
+### Force-send — interrupt-then-send
 
-`QUEUE_FORCE_SEND` runs synchronously: append to `messages` with `pending: true, forceSend: true`, then call `sendInput` immediately, ignoring `queuePaused`/`isThinking`/`attentionState`/`permissionPending`. Gray styling persists until transcript clears `pending` (which simultaneously clears `forceSend`).
+`QUEUE_FORCE_SEND` is a no-op when `permissionPending` (the force button is disabled in that state, but the reducer also gates as a safety net).
+
+Otherwise:
+1. Append message to `messages` with `pending: true, forceSend: true, awaitingInterrupt: true`. Remove from queue if id was provided.
+2. Immediately send `\x1b` byte via `sendInput(sessionId, '\x1b')`.
+3. A new `useForceSendCoordinator(sessionId)` hook watches messages with `awaitingInterrupt: true`. When `attentionState` flips to `'ok'` AND `isThinking` is false (CC has finished interrupting), it dispatches `FORCE_SEND_DELIVER({ id })` which clears `awaitingInterrupt` and calls `sendInput(sessionId, text + '\r')`.
+4. Fallback: if `awaitingInterrupt` stays true for 3 seconds (interrupt didn't land), the coordinator sends the message anyway. The 60s `MESSAGE_FAIL_PENDING` and the existing `useSubmitConfirmation` retry catch the residual case.
+
+The `\x1b` byte sent to an idle CC is benign — no turn to interrupt. The "always interrupt" policy is intentional: it keeps the force-send code path uniform regardless of CC state, and avoids the edge case where mid-typing-in-xterm + force-send misclassifies CC as idle.
+
+Gray styling persists across all three states (`awaitingInterrupt`, then `pending` post-deliver, until transcript clears `pending`).
 
 ### Esc handling
 
@@ -128,13 +139,18 @@ Independent but bundled in the same release because they unify the platform arch
 6. PTY worker echo-driven submit fires; CC processes; transcript watcher emits `TRANSCRIPT_USER_MESSAGE`.
 7. Existing `TRANSCRIPT_USER_MESSAGE` handler matches oldest pending entry by content → clears `pending`. Bubble becomes confirmed.
 
-### Force-send
+### Force-send (interrupt then send)
 
-1. User clicks force button on a queued bubble (or types and clicks "send now").
+1. User clicks force button on a queued bubble (or types and clicks "send now"). Button is disabled if `permissionPending`.
 2. `QUEUE_FORCE_SEND({ id })` or `QUEUE_FORCE_SEND({ text })` fires.
-3. Reducer appends to `messages` with `pending: true, forceSend: true`. Removes from queue if id was provided.
-4. `sendInput` fires immediately, ignoring all gate conditions.
-5. Transcript event arrives → matches by content → clears `pending` and `forceSend`. Bubble becomes confirmed.
+3. Reducer appends to `messages` with `pending: true, forceSend: true, awaitingInterrupt: true`. Removes from queue if id was provided.
+4. `sendInput(sessionId, '\x1b')` fires immediately.
+5. CC interrupts current turn. Transcript emits `[Request interrupted by user]` → existing reducer handler ends turn → `attentionState: 'ok'`, `isThinking: false`.
+6. `useForceSendCoordinator` sees the awaiting-interrupt message and now-idle state. Dispatches `FORCE_SEND_DELIVER({ id })` and calls `sendInput(sessionId, text + '\r')`.
+7. Reducer clears `awaitingInterrupt` (gray styling stays via `forceSend` until transcript confirms).
+8. PTY worker echo-driven submit fires (CC is idle so paste-classification race is essentially gone). Transcript event arrives → matches by content → clears `pending` and `forceSend`. Bubble becomes confirmed.
+
+If CC is already idle when force-send fires, the `\x1b` is benign and the coordinator delivers on the same tick.
 
 ### Pause / unpause
 
@@ -212,8 +228,17 @@ Each renderer manages its own queue. If two renderers race a release for the sam
 
 - Each gate condition individually toggled → release fires only when all open.
 - Releases sequentially: after release N, no release of N+1 until gate re-arms.
-- Force-send while gate closed → calls sendInput, does NOT trigger queue release.
+- Force-send while gate closed → triggers interrupt-then-send (sendInput `\x1b` first, then deliver via coordinator). Does NOT trigger queue release.
+- Force-send while `permissionPending` → no-op. Reducer rejects the action.
 - Pause toggled mid-release → in-flight call still fires; subsequent items wait.
+
+### `useForceSendCoordinator` hook tests (new)
+
+- Force-send dispatched → `\x1b` sent immediately, message marked `awaitingInterrupt: true`.
+- After CC interrupts and `attentionState === 'ok'` → coordinator calls `sendInput(text + '\r')`, clears `awaitingInterrupt`.
+- 3s fallback: coordinator fires sendInput even if interrupt confirmation didn't land.
+- CC already idle when force-send fires → coordinator delivers on the same tick (no observable delay).
+- Force-send while `permissionPending` → reducer rejects, coordinator never sees the message.
 
 ### `useSubmitConfirmation` interaction
 
@@ -234,7 +259,8 @@ Confirm by absence: the design adds zero new IPC types (queue is renderer-local;
 ### End-to-end integration — `desktop/tests/queue-integration.test.ts`
 
 - Enqueue 3, simulate turn end → all 3 release in order with attention re-arming between.
-- Force-send while 2 are queued → force-sent immediately becomes pending; queued items wait for normal turn.
+- Force-send while 2 are queued and CC is mid-turn → `\x1b` fires, force-sent message becomes `awaitingInterrupt: true`, then delivers when interrupt lands. Queued items wait for normal turn AFTER the force-sent message resolves.
+- Force-send while `permissionPending` → reducer rejects, force button is disabled, queue continues to wait for the permission to resolve.
 - Pause + enqueue 2 + simulate turn end → nothing releases. Unpause → both release.
 - Esc auto-pause: dispatch `\x1b` + auto-pause → queue intact, paused, `queuePauseReason === 'esc-interrupt'`.
 - Permission prompt mid-queue: enqueue 2, simulate permission event, simulate turn end + permission still pending → no release. Resolve permission → next release fires.
