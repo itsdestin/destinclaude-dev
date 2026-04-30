@@ -65,3 +65,18 @@ cd youcoded && ./gradlew assembleDebug && ./gradlew test
 # Build Android React UI from desktop source (required before APK)
 cd youcoded && ./scripts/build-web-ui.sh
 ```
+
+## Verify behavior under R8 minification (dev/release parity)
+
+Debug builds skip R8 minification, which means a class of bug — string-based reflection, annotation introspection, anything that depends on stable symbol names — works fine in dev and silently dies in release. The 2026-04-30 PluginInstaller reflection footgun (commit `912f5ca7`) shipped this way: every dev test passed, every release user couldn't install plugins. See `docs/PITFALLS.md → Build-Type Parity (Android)`.
+
+The `releaseTest` build type is the parity check. Same R8 / shrinker / proguard config as the production release flavor, signed with the debug keystore, installs side-by-side via `applicationIdSuffix = ".releasetest"`:
+
+```bash
+cd youcoded && ./gradlew :app:assembleReleaseTest
+adb install -r app/build/outputs/apk/releaseTest/*.apk
+# Installs as "YouCoded ReleaseTest" (bridge port 9961) alongside production.
+# Same data isolation as the regular debug app — no risk to your real install.
+```
+
+Use this before tagging if you've touched code that involves reflection, annotation processing, or other R8-sensitive patterns. CI runs it on every push (`android-ci.yml` and `android-test-build.yml`) so most regressions get caught at PR time.

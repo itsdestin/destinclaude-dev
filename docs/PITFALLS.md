@@ -124,6 +124,16 @@ The worker handles three input shapes deterministically. No more 600 ms timing g
 - **Release skill (`youcoded-admin`) orchestrates multi-repo coordination** across the app, `youcoded-core`, and admin — see `youcoded-admin/skills/release/SKILL.md` for the current orchestration.
 - **v2.3.0 lessons**: auto-tag was fragile, hooks were untested, spec gaps existed, protocol parity blind spots broke cross-platform features. See memory `project_release_lessons_2_3_0`.
 
+## Build-Type Parity (Android)
+
+Debug and release Android builds are NOT equivalent. The release flavor enables R8 minification (`isMinifyEnabled = true` in `app/build.gradle.kts`); debug skips it. Anything that depends on R8-stable behavior works in `assembleDebug` and silently breaks in `assembleRelease`.
+
+- **Don't use string-based reflection against your own code.** `getMethod("name")`, `getDeclaredMethod`, `Class.forName`, `KClass`, `KFunction`, `::class.declaredMembers` — R8 obfuscates the target's name and the lookup throws. The `PluginInstaller.buildEnv()` bug (commit `912f5ca7`, 2026-04-30) was this exact pattern: `bootstrap.javaClass.getMethod("buildRuntimeEnv")` returned a NoSuchMethodException in release, the silent `try/catch` fallback shipped a stripped env without `LD_PRELOAD`, and every marketplace install died with `cannot exec 'remote-https': Permission denied`. Bug shipped from 2026-03-25 (`e18ab861`, R8 first enabled) through v1.2.2 because every dev/CI build was debug.
+- **Direct calls always; reflection only when unavoidable.** When unavoidable (third-party libs, generic IPC), add an explicit `-keep` rule in `app/proguard-rules.pro` for the targeted class/methods. Don't rely on the `try { reflection } catch { fallback }` pattern — silent fallbacks mask R8-induced failures.
+- **`Bootstrap` has a defensive `-keep` rule** (`app/proguard-rules.pro`) so future code that re-introduces reflection against it can't silently break. Costs negligible APK size for one class. Don't remove it without an audit confirming nothing reflects against `Bootstrap`.
+- **`./gradlew :app:assembleReleaseTest` is the parity check.** Same R8/shrinker/proguard config as production release, signed with the debug keystore, installs side-by-side as `com.youcoded.app.releasetest` ("YouCoded ReleaseTest", bridge port 9961). Runs automatically on every push via `android-ci.yml` and on demand via `android-test-build.yml`. Run it locally before tagging if you've touched code that involves reflection, annotation processing, or any sensitive symbol-name dependency.
+- **Don't rely on the GitHub runner image for `node`.** Android workflows now `setup-node@v4` explicitly so `bundleWebUi` (which shells to `npm` via `scripts/build-web-ui.sh`) doesn't depend on whatever ubuntu-latest happens to ship.
+
 ## Prerequisite Installer (First-Run)
 
 The desktop installer's first-run flow lives in `youcoded/desktop/src/main/prerequisite-installer.ts` and `first-run.ts`. A real-user `spawn EINVAL` on a clean Windows 11 machine motivated the rules below; don't regress.
