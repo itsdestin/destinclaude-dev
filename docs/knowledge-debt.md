@@ -84,3 +84,31 @@ CHANGELOG entry: "v2.1.117: The `cleanupPeriodDays` retention sweep now also cov
 - **Actual**: The authoritative list of fields is `AppEventPayload` in `wecoded-marketplace/worker/src/lib/analytics.ts`, with the client payloads constructed in `youcoded/desktop/src/main/analytics-service.ts` and `youcoded/app/src/main/kotlin/com/youcoded/app/analytics/AnalyticsService.kt`. If someone adds or renames a field in any of those three code sites without updating the three copy surfaces, the Privacy promise drifts from the code and user trust erodes silently.
 - **Fix**: Every change that touches `AppEventPayload` shape, the desktop `payload` object, or the Android `payload` JSON must include matching edits to (a) `AboutPopup.tsx` (both platform branches), (b) the FAQ answer for "Is my data private?" in `youcoded/docs/index.html`, and (c) the three "Final copy" sections in the privacy-analytics spec. Run `/audit analytics` before shipping any change in this area.
 - **Priority**: medium (silent drift risk; the worst outcome is claiming we don't collect something we do)
+
+## CC-drift: Adopt PostToolUse updatedToolOutput for tool-output rewriting (surfaced 2026-04-29, from CC v2.1.123)
+
+CC v2.1.121 expanded PostToolUse's hookSpecificOutput.updatedToolOutput so it works for ALL tools, not just MCP. YouCoded could use this from the bundled hooks (write-guard, hook-relay) to redact secrets, normalize paths, or annotate output before it reaches the LLM. Small-medium effort to wire into hooks-manifest.json and the hook-relay handlers; primary value is secret/PII redaction at the tool-output boundary. Currently no parallel facility.
+
+CHANGELOG entry: CC v2.1.121 — PostToolUse hooks can now replace tool output for all tools via hookSpecificOutput.updatedToolOutput (previously MCP-only)
+
+## CC-drift: Wrap claude ultrareview CLI in YouCoded admin skill (surfaced 2026-04-29, from CC v2.1.123)
+
+CC v2.1.120 added `claude ultrareview [target]` as a non-interactive subcommand that prints findings to stdout (--json for raw) and exits 0/1 on completion/failure. YouCoded's existing /ultrareview admin skill is interactive only. Wrapping the new CLI lets the admin skill run review headlessly — useful for the release pipeline (auto-run before tag), nightly CI, or PR comment bots. Small effort to thread the subcommand into youcoded-admin/skills/release if desired.
+
+CHANGELOG entry: CC v2.1.120 — Added claude ultrareview [target] subcommand to run /ultrareview non-interactively from CI or scripts — prints findings to stdout (--json for raw output) and exits 0 on completion or 1 on failure
+
+## CC-verification: scrollback duplication, orphan-spinner, MCP-spawn, TaskList ordering (surfaced 2026-04-29, from CC v2.1.123)
+
+Five CC v2.1.119–v2.1.121 fixes touch behaviors YouCoded code paths interact with. Static review at release time confirmed no code change is required, but post-release runtime verification was deferred:
+
+- **TerminalView.tsx (xterm scrollback duplication)** — CC v2.1.120 + v2.1.121 fixed scrollback duplication on tmux/GNOME Terminal/Windows Terminal/Konsole resize/redraw. PITFALLS.md "Vendored Termux terminal-emulator" still documents "xterm scrollback can show duplicated TUI chrome" as a known issue. Verify on a long Android session and a long desktop session that previously exhibited the duplication. If gone, drop the bullet.
+- **attention-classifier.ts (orphaned subagent spinner)** — CC v2.1.119 fixed spinner staying on when a subagent task notification was orphaned. YouCoded's classifier would have correctly tagged this as `thinking-stalled` after 10s. Post-fix the spinner should stop on its own; re-run `desktop/test-conpty/test-attention-states.mjs` against CC v2.1.123 and confirm `desktop/tests/attention-classifier-parity.test.ts` still passes.
+- **claude-code-registry.ts (MCP plugin spawn on Windows)** — CC v2.1.119 fixed MCP servers from plugins not spawning on Windows when the plugin cache was incomplete. On a Windows test machine, install spotify-services via the marketplace UI and verify `/mcp` shows it Connected. If the workaround note in PITFALLS.md "MCP Plugin Authoring" no longer applies, drop it.
+- **task-state.ts (TaskList ordering)** — CC v2.1.119 fixed TaskList returning tasks in arbitrary filesystem order instead of sorted by ID. Open the Open Tasks popup in a session with several tasks at mixed statuses; verify ordering is by ID ascending and that the chip count matches.
+
+## CC-verification: install-prereq POSIX bash/curl probing + reg.exe absolute path (surfaced 2026-04-29, from review-platform)
+
+`desktop/src/main/prerequisite-installer.ts` `installClaude` POSIX branch silently assumes `/bin/bash` exists and `curl` is on PATH; on stripped Linux distros (Alpine, certain container images) this can fail with raw stderr instead of clear "install bash + curl" guidance. Optional follow-up: probe with `runCommand('bash', ['--version'])` and `runCommand('curl', ['--version'])` first.
+
+`refreshPath()` at line 152 invokes `reg query` without resolving `reg.exe` via `which` / PATHEXT. C:\Windows\System32 is reliably on PATH so this works in practice, but inherits Electron's snapshot of PATH at app launch — same vulnerability the rest of the file works around with `resolveCommand()`. Real fix would be to invoke C:\Windows\System32\reg.exe by absolute path.
+
