@@ -345,7 +345,7 @@ Bare-summary parallel fetch grows from 6 endpoints to 7 (adds `/admin/analytics/
 
 ## Risks and open items
 
-1. **Cloudflare AE subquery support.** The "installs derived from first-seen" query uses `FROM (subquery)`. AE's SQL subset is narrow (`uniq()` rejected, `INTERVAL` requires quoted strings). If subqueries don't work, fallback path is two-queries-and-JS. Validate during implementation, before committing to the derivation approach.
+1. **Cloudflare AE subquery support.** The "installs derived from first-seen" query uses `FROM (subquery)`. AE's SQL subset is narrow (`uniq()` rejected, `INTERVAL` requires quoted strings). **Validated 2026-05-01:** AE accepts subqueries in FROM. The derived `/admin/analytics/installs?days=7` returned correct rows (`[{"day":"2026-04-25","installs":"1"},...,{"day":"2026-05-01","installs":"4"}]`) on first deploy. Two-query fallback retired.
 2. **node-machine-id on Linux without systemd.** A small slice of Linux users on minimal/embedded distros may not have `/etc/machine-id`. They take the fallback-UUID path, which behaves like the legacy install_id (rotates on `~/.claude` wipe). Acceptable degradation.
 3. **VM/container collisions.** Linux VMs spawned from the same disk image can share `/etc/machine-id`. Two such VMs on the same machine count as one device. Acceptable; corner case unlikely at YouCoded scale.
 4. **First-seen-resets-after-90-day-silence edge case.** A device active >90 days ago but silent for >90 days will look "new" on return because all its old heartbeats aged out. Worth documenting in the `/analytics` skill comments; not worth defending against at current scale.
