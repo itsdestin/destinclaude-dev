@@ -13,7 +13,7 @@ This spec defines that recovery flow: an opt-in, one-decision screen that appear
 
 Distinct from the existing `ResumeBrowser` feature (manual browse + resume any past session from any project). This feature only handles **active-at-time-of-close** sessions and only fires automatically on cold start. It complements the ResumeBrowser, doesn't replace it.
 
-In scope: desktop + Android, single-window restore, dead-session inclusion, last-message preview.
+In scope: desktop + Android, single-window restore, dead-and-clean-exit sessions treated identically, last-message preview.
 Out of scope: multi-window restore (sessions all collapse into the main window for v1), reminders if the user picks "Start fresh", auto-resume without prompting.
 
 ## What gets tracked
@@ -25,9 +25,8 @@ A persisted list of currently-active sessions, stored at `~/.claude/youcoded-act
 - Project path / `cwd`
 - Topic name snapshot (from `~/.claude/topics/topic-<id>` if present, else `"Untitled"`)
 - Last-activity timestamp (epoch ms)
-- `diedUnexpectedly: boolean` — true if the session ended with `attentionState: 'session-died'`
 
-Only sessions that have had at least one real user prompt are tracked. Empty sessions are silently dropped — opening a tab and closing it without typing is not "in-flight work."
+Only sessions that have had at least one real user prompt are tracked. Empty sessions are silently dropped — opening a tab and closing it without typing is not "in-flight work." Sessions that ended with `session-died` are treated identically to any other session in the list — no special flag, no extra badge, just offered for resume the same way.
 
 The same file path is used on each platform: `~/.claude/youcoded-active-sessions.json`. On Android, `~/.claude` resolves inside the Termux env, which is a separate filesystem location from desktop's `~/.claude` — each platform owns its own copy of the file (matches the existing announcement-cache pattern). Cross-platform parity is at the JSON shape, not at the file location.
 
@@ -37,9 +36,8 @@ The same file path is used on each platform: `~/.claude/youcoded-active-sessions
 |-------|--------|
 | Session sends its first user prompt | Entry **added** |
 | User closes a session via the X in the session strip | Entry **removed** |
-| Session ends with `attentionState: 'session-died'` | Entry **flagged** with `diedUnexpectedly: true` (still resumable) |
 | Topic file is written for the session | Entry's topic name **updated** |
-| App quit, window close, crash, OS kill | List left **as-is** |
+| App quit, window close, crash, OS kill, session-died | List left **as-is** |
 
 Writes are eager and atomic (write to a sibling temp file, then `rename`). On a crash, the file on disk is always within seconds of correct — no quit-hook dependency.
 
@@ -65,7 +63,6 @@ A full-screen takeover replacing the welcome screen — not a modal, not a banne
   - Checkbox on the left, **all checked by default**.
   - Topic name (large; `Untitled` if no topic was written yet).
   - Project path + relative time (`youcoded-dev · 12 min ago`).
-  - Subtle `ended unexpectedly` pill if `diedUnexpectedly` — informational, not blocking.
   - **Last user message** — one line, italic-quoted, ellipsis-truncated.
   - **Last assistant message** — one line, ellipsis-truncated.
   - Hover state on the whole row; clicking anywhere toggles the checkbox.
@@ -117,7 +114,7 @@ No explanatory hint about ResumeBrowser is shown. The existing UI is discoverabl
 
 Implementation details for the planning phase to flesh out — not load-bearing for the design.
 
-- **Persistence helper (desktop):** new Node module `desktop/src/main/active-sessions-store.ts` exporting pure-function lifecycle helpers (`addSession`, `removeSession`, `markDied`, `pruneMissingTranscripts`, `readList`, `writeListAtomic`) — testable without a running app.
+- **Persistence helper (desktop):** new Node module `desktop/src/main/active-sessions-store.ts` exporting pure-function lifecycle helpers (`addSession`, `removeSession`, `updateTopic`, `pruneMissingTranscripts`, `readList`, `writeListAtomic`) — testable without a running app.
 - **Persistence helper (Android):** mirror in Kotlin at `app/.../runtime/ActiveSessionsStore.kt`, writing the same JSON shape into Android's own `~/.claude/youcoded-active-sessions.json` (inside the Termux env). Same pattern as `AnnouncementService.kt` mirroring `announcement-service.ts`. Both writers must agree on the field set; a small fixture test in each repo locks the shape.
 - **New IPC message types:** `session:active-list-read` (returns the list, post-precheck) is the only one the renderer needs — lifecycle writes are triggered by reducer events, not user actions, and happen entirely in main / `SessionService`. The read message must be present in `preload.ts`, `remote-shim.ts`, `ipc-handlers.ts`, and `SessionService.kt` per cross-platform parity rules.
 - **Resume screen component:** new `src/renderer/components/ResumeOnStartupScreen.tsx`. Mounted as a top-level state in `App.tsx` ahead of the welcome screen render path.
@@ -128,8 +125,8 @@ Implementation details for the planning phase to flesh out — not load-bearing 
 Three things worth pinning to tests rather than hand-verification:
 
 - **List file shape:** schema test on the JSON shape, locking the field set.
-- **Lifecycle transitions:** unit tests for the pure-function store helpers (desktop) — covering add-on-first-prompt, remove-on-close-button, mark-died, prune-missing-transcript, atomic-write rollback. Kotlin mirror gets a smaller parity test that round-trips the same fixture JSON through `ActiveSessionsStore.kt`.
-- **Resume screen rendering:** renderer test against a fixture list with varied states (no preview text, dead session badge, `Untitled`, single-item, all-checked vs. some-checked, zero-checked = button disabled).
+- **Lifecycle transitions:** unit tests for the pure-function store helpers (desktop) — covering add-on-first-prompt, remove-on-close-button, update-topic, prune-missing-transcript, atomic-write rollback. Kotlin mirror gets a smaller parity test that round-trips the same fixture JSON through `ActiveSessionsStore.kt`.
+- **Resume screen rendering:** renderer test against a fixture list with varied states (no preview text, `Untitled`, single-item, all-checked vs. some-checked, zero-checked = button disabled).
 
 ## Open questions
 
