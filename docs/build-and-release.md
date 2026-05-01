@@ -34,6 +34,16 @@ A single `vX.Y.Z` tag in youcoded triggers both `android-release.yml` and `deskt
 2. `auto-tag.yml` compares `HEAD` vs `HEAD~1` plugin.json versions
 3. If changed, creates `vX.Y.Z` tag automatically
 
+### Worker (wecoded-marketplace)
+**The Cloudflare Worker auto-deploys on push to master — never tell Destin to run `wrangler deploy` manually.** `.github/workflows/worker-deploy.yml` runs on `push` to `master` (filtered to `worker/**` and the workflow file itself) plus `workflow_dispatch`. The job runs `npm test` → `wrangler d1 migrations apply --remote` → `wrangler deploy` → `wrangler secret put` for every required secret. Cloudflare credentials live in repo secrets (`CF_API_TOKEN`, `CF_ACCOUNT_ID`); no local `wrangler login` needed.
+
+To ship a worker change:
+1. Open a PR from your feature branch to `master`.
+2. Merge (squash or merge-commit, doesn't matter).
+3. CI does the rest. Smoke-test the live endpoints once Actions reports green.
+
+If you need to flip a `[vars]` value (e.g. `CUTOVER_TIMESTAMP`), commit it to `wrangler.toml` and merge — same auto-deploy path. Wrangler `secret put` is for secrets only and lives in CI's `Push secrets` step (`MARKETPLACE_GH_CLIENT_ID`, `MARKETPLACE_GH_CLIENT_SECRET`, `KNOWN_DEV_DEVICES`, etc.). Adding a new secret means a Repo → Settings → Secrets entry plus a one-line addition to the workflow's `Push secrets` step.
+
 ## Local dev loop (desktop)
 
 The supported way to iterate on desktop changes while the installed/built app stays open for real work:
