@@ -48,12 +48,26 @@ YouCoded is an open-source cross-platform AI assistant app built entirely withou
 
 ## Working Rules
 
+**NEVER touch Destin's live, built YouCoded app.** All development, testing, debugging, and runtime verification must happen in a dev workspace using `bash scripts/run-dev.sh` (which spins up an isolated Electron instance on shifted ports with separate `userData`). The built app on his machine is his **working environment** — treat it like production. Specifically forbidden against the live app:
+- Running JavaScript in DevTools (even read-only — DevTools contention can stall or crash the renderer)
+- Sending IPC messages, modifying DOM/CSS/localStorage, dispatching reducer actions
+- Killing, restarting, or signalling its processes
+- Touching files Electron has open (cookies, Local Storage leveldb, settings.json, .claude.json)
+- Installing/uninstalling plugins or themes
+- Any code change that requires the running app to reload it
+
+When you need to verify runtime behavior (GPU usage, DOM state, IPC responses, theme rendering, etc.), the workflow is **always**: dev worktree → `bash scripts/run-dev.sh` → test in the dev window. Never the production install.
+
+Read-only process inspection from outside the app is fine (`Get-Process`, GPU counters, Task Manager observation, log file tailing). Anything that *talks to* the running app is not.
+
 **Always sync before working.** Before changes, plans, or investigations, pull the latest:
 ```bash
 cd <repo> && git fetch origin && git pull origin master
 ```
 
 **Use worktrees for non-trivial work.** Any work beyond a handful of lines must be done in a separate git worktree (or use the Agent tool with `isolation: "worktree"`). This prevents multiple concurrent Claude sessions from overwriting each other's changes.
+
+**`git worktree remove` follows junctions on Windows.** If you junctioned `node_modules` into a worktree (e.g., `cmd //c "mklink /J node_modules ..."` to share the main checkout's deps), `git worktree remove` will recursively delete through that junction and wipe the **main checkout's** `node_modules`. Before removing the worktree, delete the junction first: `cmd //c "rmdir <path-to-junction>"` (NOT `rm -rf`, which also follows). Then run `git worktree remove`.
 
 **Annotate non-trivial code edits with a WHY comment.** Destin is a non-developer and relies on comments to understand what code does and why it was changed. Example: `// Fix: prevent stale tool IDs from coloring the status dot`. This is critical for long-term maintainability.
 
